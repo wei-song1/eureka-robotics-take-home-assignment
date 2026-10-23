@@ -1,17 +1,19 @@
 # To Do List
 
 ## Moveement
-- [ ] Figure out how to do movement
-    - [ ] Add movement functions
-        - [ ] Face up/down/left/right
-        - [ ] Rotate clockwise/counter-clockwise
-        - [ ] Move forward (by x seconds or units)
-    - [ ] Add manual controls to manually control robot in debug screen
+- [X] Figure out how to do manual movement
+    - [X] Add movement functions
+        - [X] Face up/down/left/right
+        - [X] Rotate clockwise/counter-clockwise
+        - [X] Move forward (by 1 robot unit)
+    - [X] Add manual controls to manually control robot in debug screen
 
 ## Map
-- [ ] Figure out how to get 2D occupancy map
-    - Maybe break map into grid and use A* Search or Dijkstra?
-- [ ] Find how to locate robot, goals on the map
+- [X] Figure out how to get 2D occupancy map
+    - [ ] Maybe break map into grid and use A* Search or Dijkstra?
+    - [ ] Find a way to add a way to do dijkstra/A* search
+- [X] Find how to locate robot on the map
+- [ ] Find how to locate goals on the map
 
 ## Camera Recording
 - [ ] Figure out how to get stream of robot and save it somehow
