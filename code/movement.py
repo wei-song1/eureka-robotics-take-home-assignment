@@ -1,7 +1,6 @@
 import math
 import time
 
-
 YAW_NORTH = math.pi / 2
 YAW_SOUTH = -math.pi / 2
 YAW_EAST = 0
@@ -11,13 +10,11 @@ robot = None
 simulator = None
 travelled_path = None
 
-
 def configure(robot_value, simulator_value, travelled_path_value):
     global robot, simulator, travelled_path
     robot = robot_value
     simulator = simulator_value
     travelled_path = travelled_path_value
-
 
 def face_direction(yaw):
     wheel_base = robot["wheel_base"]

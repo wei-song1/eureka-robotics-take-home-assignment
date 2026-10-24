@@ -1,3 +1,4 @@
 {
-    "cmake.sourceDirectory": "/Users/weisong/Desktop/package-for-candidate/examples"
+    "cmake.sourceDirectory": "/Users/weisong/Desktop/package-for-candidate/examples",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

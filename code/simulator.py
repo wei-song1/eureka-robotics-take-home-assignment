@@ -4,16 +4,13 @@ import time
 
 import zmq
 
-
 ap = argparse.ArgumentParser()
 ap.add_argument("--host", default="localhost")
 ap.add_argument("--port-base", type=int, default=5555)
 args = ap.parse_args()
 
-
 def url(k):
     return f"tcp://{args.host}:{args.port_base + k}"
-
 
 ctx = zmq.Context()
 rpc = ctx.socket(zmq.REQ)
@@ -27,7 +24,6 @@ camera = ctx.socket(zmq.SUB)
 camera.setsockopt(zmq.RCVHWM, 2)
 camera.connect(url(3))
 camera.setsockopt(zmq.SUBSCRIBE, b"")
-
 
 def call(method, **params):
     rpc.send_json({"method": method, "params": params})

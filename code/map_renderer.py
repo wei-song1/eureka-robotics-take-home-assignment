@@ -3,7 +3,6 @@ import math
 
 from PIL import Image, ImageDraw
 
-
 GOAL_COLOUR = "yellow"
 TRAIL_COLOUR = "blue"
 ROBOT_COLOUR = "green"
@@ -12,7 +11,6 @@ OUTLINE_COLOUR = "black"
 
 simulator = None
 travelled_path = None
-
 
 def configure(simulator_value, travelled_path_value):
     global simulator, travelled_path
