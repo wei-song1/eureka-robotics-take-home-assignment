@@ -1,1 +1,3 @@
 top_down_map.png
+__pycache__/
+*.py[cod]
