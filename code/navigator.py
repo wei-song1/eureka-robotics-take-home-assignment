@@ -14,6 +14,18 @@ YAW_SOUTH = -math.pi / 2
 YAW_EAST = 0
 YAW_WEST = math.pi
 
+ROBOT_RADIUS_M = 0.17
+ROBOT_DIAMETER_M = 2 * ROBOT_RADIUS_M
+
+GOAL_POSITION_TOLERANCE_M = 0.05
+GOAL_YAW_TOLERANCE_RAD = math.radians(5)
+
+GOAL_COLOUR = "yellow"
+TRAIL_COLOUR = "blue"
+ROBOT_COLOUR = "green"
+ROBOT_POINTER_COLOUR = "lime"
+OUTLINE_COLOUR = "black"
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--host", default="localhost")
 ap.add_argument("--port-base", type=int, default=5555)
@@ -38,6 +50,8 @@ camera.connect(url(3))
 camera.setsockopt(zmq.SUBSCRIBE, b"")
 
 
+
+# Helper Functions ====================================
 def call(method, **params):
     rpc.send_json({"method": method, "params": params})
     frames = rpc.recv_multipart()
@@ -54,9 +68,81 @@ def latest(sock):
         msg = sock.recv_multipart()
     return msg
 
+# ping 	— 	{"t": float}
+def ping():
+    result, _ = call("ping")
+    return result
+
+# list_scenes 	— 	[{"id": "01", "name": str, "difficulty": "easy"|"advanced"}]
+def list_scenes():
+    scenes, _ = call("list_scenes")
+    return scenes
+
+# load_scene 	id, seed? 	{"id", "start": {"x", "y", "yaw"}, "goals": [...]}; start is exact
+def load_scene(scene_id, seed=None):
+    params = {"id": scene_id}
+    if seed is not None:
+        params["seed"] = seed
+
+    scene, _ = call("load_scene", **params)
+    return scene
+
+# reset 	seed? 	same as load_scene, current scene
+def reset(seed=None):
+    params = {}
+    if seed is not None:
+        params["seed"] = seed
+
+    scene, _ = call("reset", **params)
+    return scene
+
+# get_goals 	— 	[{"name": str, "pose": [x, y, yaw?]}]
+def get_goals():
+    goals, _ = call("get_goals")
+    return goals
+
+# get_map 	— 	header + PNG frame (section 7)
+def get_map():
+    header, frames = call("get_map")
+    return header, frames
+
+# get_robot_info 	— 	dimensions, limits, ticks_per_rev, watchdog, rates
+def get_robot_info():
+    info, _ = call("get_robot_info")
+    return info
+
+# get_camera_info 	— 	{"width", "height", "fx", "fy", "cx", "cy", "depth_scale", "max_depth", "rate", "T_base_camera": 4×4}
+def get_camera_info():
+    info, _ = call("get_camera_info")
+    return info
+
+# mark_goal 	name 	{"t": float}: simulation time of the mark
+def mark_goal(name):
+    result, _ = call("mark_goal", name=name)
+    return result
+
+def choose(prompt, options):
+    """Accept an option's name or its number."""
+    print(f"\n{prompt}")
+    for option in options:
+        print(f"- {option}")
+
+    while True:
+        answer = input("> ").strip()
+
+        for option in options:
+            if answer.casefold() == option.casefold():
+                return option
+
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1]
+
+        print("Please enter one of the listed options.")
+# Helper Functions ====================================
 
 
-# Robot Movement Functions
+
+# Robot Movement Functions =============================
 def face_direction(yaw):
     wheel_base = robot["wheel_base"]
     wheel_radius = robot["wheel_radius"]
@@ -159,11 +245,11 @@ def move_forward_one_robot_size(timeout=15):
             "left": 0.0,
             "right": 0.0,
         })
+# Robot Movement Functions =============================
 
-def mark_goal(goal_name):
-    result, _ = call("mark_goal", name=goal_name)
-    print(f"Marked '{goal_name}' at simulation time {result['t']:.2f}s")
 
+
+# Map Functions =========================================
 def save_top_down_map(filename="top_down_map.png"):
     map_info, frames = call("get_map")
     goals, _ = call("get_goals")
@@ -196,7 +282,7 @@ def save_top_down_map(filename="top_down_map.png"):
     if len(path_pixels) >= 2:
         draw.line(
             path_pixels,
-            fill="blue",
+            fill=TRAIL_COLOUR,
             width=3,
         )
 
@@ -215,8 +301,8 @@ def save_top_down_map(filename="top_down_map.png"):
                 gx + marker_radius,
                 gy + marker_radius,
             ),
-            fill="yellow",
-            outline="yellow",
+            fill=GOAL_COLOUR,
+            outline=GOAL_COLOUR,
             width=1,
         )
 
@@ -231,16 +317,16 @@ def save_top_down_map(filename="top_down_map.png"):
 
             draw.line(
                 (gx, gy, end_px, end_py),
-                fill="yellow",
+                fill=GOAL_COLOUR,
                 width=2,
             )
 
         draw.text(
             (gx + marker_radius + 3, gy - 8),
             goal["name"],
-            fill="yellow",
+            fill=GOAL_COLOUR,
             stroke_width=1,
-            stroke_fill="black",
+            stroke_fill=OUTLINE_COLOUR,
         )
 
     pixel_x, pixel_y = world_to_pixel(pose["x"], pose["y"])
@@ -257,8 +343,8 @@ def save_top_down_map(filename="top_down_map.png"):
             pixel_x + radius_pixels,
             pixel_y + radius_pixels,
         ),
-        fill="dodgerblue",
-        outline="blue",
+        fill=ROBOT_COLOUR,
+        outline=ROBOT_COLOUR,
         width=1,
     )
 
@@ -275,7 +361,7 @@ def save_top_down_map(filename="top_down_map.png"):
 
     draw.line(
         (pixel_x, pixel_y, tip_x, tip_y),
-        fill="red",
+        fill=ROBOT_POINTER_COLOUR,
         width=2,
     )
 
@@ -301,7 +387,7 @@ def save_top_down_map(filename="top_down_map.png"):
                 base_y - head_half_width * perpendicular_y,
             ),
         ],
-        fill="red",
+        fill=ROBOT_POINTER_COLOUR,
     )
 
     image.save(filename, format="PNG")
@@ -317,24 +403,7 @@ def save_top_down_map(filename="top_down_map.png"):
     print(f"Robot diameter on image: {2 * radius_pixels:.1f} pixels")
     print("Goals:", [goal["name"] for goal in goals])
     print("===================\n")
-
-def choose(prompt, options):
-    """Accept an option's name or its number."""
-    print(f"\n{prompt}")
-    for option in options:
-        print(f"- {option}")
-
-    while True:
-        answer = input("> ").strip()
-
-        for option in options:
-            if answer.casefold() == option.casefold():
-                return option
-
-        if answer.isdigit() and 1 <= int(answer) <= len(options):
-            return options[int(answer) - 1]
-
-        print("Please enter one of the listed options.")
+# Map Functions =========================================
 
 
 # Scene selection
