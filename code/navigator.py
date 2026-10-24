@@ -318,40 +318,67 @@ def save_top_down_map(filename="top_down_map.png"):
     print("Goals:", [goal["name"] for goal in goals])
     print("===================\n")
 
-# Configuration
-scene_id = "01"
-seed = 42
+def choose(prompt, options):
+    """Accept an option's name or its number."""
+    print(f"\n{prompt}")
+    for option in options:
+        print(f"- {option}")
 
-# Initialisation
+    while True:
+        answer = input("> ").strip()
+
+        for option in options:
+            if answer.casefold() == option.casefold():
+                return option
+
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1]
+
+        print("Please enter one of the listed options.")
+
+
+# Scene selection
 scenes, _ = call("list_scenes")
 
-def scene_label(s):
-    return f"{int(s['id'])} ({s['difficulty'].capitalize()})"
+scene_options = {
+    f"{s['id']} ({s['difficulty'].lower()})": s["id"]
+    for s in scenes
+}
 
-print("Scenes available:", ", ".join(scene_label(s) for s in scenes))
+selected_scene = choose("Which scene do you want?", list(scene_options))
+scene_id = scene_options[selected_scene]
 
-chosen = next(s for s in scenes if s["id"] == scene_id)
+
+# Seed selection
+print("\nWhat seed?")
+while True:
+    try:
+        seed = int(input("> ").strip())
+        break
+    except ValueError:
+        print("Please enter a whole number.")
+
+
+# Load the selected scene to get its goals.
 scene, _ = call("load_scene", id=scene_id, seed=seed)
 
-print(f"\nScene chosen: {scene_label(chosen)}")
-print(f"Seed: {seed}")
-print("Goals:", [g["name"] for g in scene["goals"]])
+goal_names = [g["name"] for g in scene["goals"]]
+selected_goal = choose("Which goal?", goal_names + ["Manual"])
 
+# Automatic goal handling will be added later.
+if selected_goal != "Manual":
+    sys.exit(0)
+
+
+# Manual mode initialisation
 start = scene["start"]
-print(
-    f"Starting Position: x: {start['x']:.4f}, "
-    f"y: {start['y']:.4f}, yaw: {start['yaw']:.3f}"
-)
-
 robot, _ = call("get_robot_info")
 cam, _ = call("get_camera_info")
 travelled_path = []
 
-# Reset to default position
 face_north()
 save_top_down_map()
 
-# Terminal keyboard controls
 controls = {
     "w": face_north,
     "s": face_south,
@@ -360,12 +387,12 @@ controls = {
     "q": turn_45d_anticlockwise,
     "e": turn_45d_clockwise,
     "f": move_forward_one_robot_size,
-    "r": mark_goal
 }
 
 print("\nManual Robot Controls")
-print("Controls: W = North, S = South, D = East, A = West, ")
-print("Q = Turn Clockwise, E = Turn Anticlockwise, F = Move Foward, R <goal> = Mark Goal")
+print("W = North, S = South, D = East, A = West")
+print("Q = Turn Anticlockwise, E = Turn Clockwise")
+print("F = Move Forward, R <goal> = Mark Goal")
 print("Type a letter and press Enter. M = Quit.")
 
 try:
@@ -388,7 +415,10 @@ try:
                 action = controls.get(key)
 
                 if action is None:
-                    print("Invalid input. Use W, A, S, D, E, Q, F, R <goal>, or M to quit")
+                    print(
+                        "Invalid input. Use W, A, S, D, E, Q, F, "
+                        "R <goal>, or M to quit."
+                    )
                     continue
 
                 action()
@@ -397,12 +427,12 @@ try:
             print("Finished action.")
 
         except TimeoutError as exc:
-            print(f"Turn failed: {exc}")
+            print(f"Action failed: {exc}")
 
 except (KeyboardInterrupt, EOFError):
     print("\nExiting.")
 
 finally:
-    travelled_path.clear()
-    scene, _ = call("load_scene", id="01", seed=42)
     cmd.send_json({"type": "wheels", "left": 0.0, "right": 0.0})
+    travelled_path.clear()
+    scene, _ = call("load_scene", id=scene_id, seed=seed)
