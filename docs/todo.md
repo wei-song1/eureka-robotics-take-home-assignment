@@ -13,7 +13,8 @@
     - [ ] Maybe break map into grid and use A* Search or Dijkstra?
     - [ ] Find a way to add a way to do dijkstra/A* search
 - [X] Find how to locate robot on the map
-- [ ] Find how to locate goals on the map
+- [X] Find how to locate goals on the map
+- [X] Find how to add trail for robot on the map
 
 ## Camera Recording
 - [ ] Figure out how to get stream of robot and save it somehow

@@ -1,7 +1,3 @@
-"""Minimal Python client: RPC, map, wheels, goto, state and camera streams.
-
-pip install pyzmq numpy pillow; python client.py [--host localhost]
-"""
 import argparse
 import io
 import json
@@ -40,6 +36,10 @@ camera = ctx.socket(zmq.SUB)
 camera.setsockopt(zmq.RCVHWM, 2)
 camera.connect(url(3))
 camera.setsockopt(zmq.SUBSCRIBE, b"")
+
+
+travelled_path = []
+
 
 
 def call(method, **params):
@@ -113,9 +113,11 @@ def turn_45d_anticlockwise():
     pose = json.loads(latest(state)[0])["pose"]
     face_direction(pose["yaw"] + math.pi/4)
 
-def move_forward_one_robot_size():
-    robot_state = json.loads(latest(state)[0])
-    pose = robot_state["pose"]
+def move_forward_one_robot_size(timeout=15):
+    if not state.poll(500):
+        raise TimeoutError("No robot state received")
+
+    pose = json.loads(latest(state)[0])["pose"]
 
     distance = 0.34
     target_x = pose["x"] + distance * math.cos(pose["yaw"])
@@ -130,30 +132,119 @@ def move_forward_one_robot_size():
         "y": target_y,
     })
 
-    return command_id
+    deadline = time.monotonic() + timeout
+
+    try:
+        while time.monotonic() < deadline:
+            if not state.poll(500):
+                raise TimeoutError("No robot state received")
+
+            pose = json.loads(latest(state)[0])["pose"]
+
+            # Record positions during movement for the blue trail.
+            travelled_path.append((pose["x"], pose["y"]))
+
+            distance_remaining = math.hypot(
+                target_x - pose["x"],
+                target_y - pose["y"],
+            )
+
+            if distance_remaining <= 0.03:  # Within 3 cm
+                return command_id
+
+        raise TimeoutError("Robot did not reach the target")
+
+    finally:
+        cmd.send_json({
+            "type": "wheels",
+            "left": 0.0,
+            "right": 0.0,
+        })
 
 def save_top_down_map(filename="top_down_map.png"):
     map_info, frames = call("get_map")
+    goals, _ = call("get_goals")
 
     robot_state = json.loads(latest(state)[0])
     pose = robot_state["pose"]
+
+    travelled_path.append((pose["x"], pose["y"]))
 
     resolution = map_info["resolution"]
     origin_x, origin_y = map_info["origin"]
     height = map_info["height"]
 
     # Convert world coordinates to image coordinates.
-    # Image Y increases downward; world Y increases upward.
-    # The -0.5 aligns coordinates with pixel centres.
-    pixel_x = (pose["x"] - origin_x) / resolution - 0.5
-    pixel_y = height - 0.5 - (pose["y"] - origin_y) / resolution
-
-    # Robot diameter is 0.34 m, according to the specification.
-    robot_radius = 0.34 / 2
-    radius_pixels = robot_radius / resolution
+    def world_to_pixel(x, y):
+        pixel_x = (x - origin_x) / resolution - 0.5
+        pixel_y = height - 0.5 - (y - origin_y) / resolution
+        return pixel_x, pixel_y
 
     image = Image.open(io.BytesIO(frames[0])).convert("RGB")
     draw = ImageDraw.Draw(image)
+
+    # Convert all recorded positions into image coordinates.
+    path_pixels = [
+        world_to_pixel(x, y)
+        for x, y in travelled_path
+    ]
+
+    # Connect consecutive positions with a blue line.
+    if len(path_pixels) >= 2:
+        draw.line(
+            path_pixels,
+            fill="blue",
+            width=3,
+        )
+
+    # Draw goals before the robot so the robot stays visible.
+    for goal in goals:
+        goal_pose = goal["pose"]
+        goal_x, goal_y = goal_pose[:2]
+        gx, gy = world_to_pixel(goal_x, goal_y)
+
+        marker_radius = 5
+
+        draw.ellipse(
+            (
+                gx - marker_radius,
+                gy - marker_radius,
+                gx + marker_radius,
+                gy + marker_radius,
+            ),
+            fill="yellow",
+            outline="yellow",
+            width=1,
+        )
+
+        # Show the required final heading, when provided.
+        if len(goal_pose) > 2 and goal_pose[2] is not None:
+            goal_yaw = goal_pose[2]
+            heading_length = 0.25  # Metres
+
+            end_x = goal_x + heading_length * math.cos(goal_yaw)
+            end_y = goal_y + heading_length * math.sin(goal_yaw)
+            end_px, end_py = world_to_pixel(end_x, end_y)
+
+            draw.line(
+                (gx, gy, end_px, end_py),
+                fill="yellow",
+                width=2,
+            )
+
+        draw.text(
+            (gx + marker_radius + 3, gy - 8),
+            goal["name"],
+            fill="yellow",
+            stroke_width=1,
+            stroke_fill="black",
+        )
+
+    pixel_x, pixel_y = world_to_pixel(pose["x"], pose["y"])
+
+    # Robot diameter is 0.34 m.
+    robot_radius = 0.34 / 2
+    radius_pixels = robot_radius / resolution
 
     # Draw the robot's footprint at its actual scale.
     draw.ellipse(
@@ -212,6 +303,7 @@ def save_top_down_map(filename="top_down_map.png"):
 
     image.save(filename, format="PNG")
 
+    print("\n=== Debug Info ===")
     print(f"Map saved to {filename}")
     print("Map Info:", map_info)
     print(
@@ -220,8 +312,8 @@ def save_top_down_map(filename="top_down_map.png"):
         f"yaw={math.degrees(yaw):.1f}°"
     )
     print(f"Robot diameter on image: {2 * radius_pixels:.1f} pixels")
-
-    return map_info
+    print("Goals:", [goal["name"] for goal in goals])
+    print("===================\n")
 
 # Load a scene, read the robot and camera info, save the map.
 print("scenes:", [s["id"] for s in call("list_scenes")[0]])
@@ -230,8 +322,9 @@ print("start:", scene["start"], "goals:", [g["name"] for g in scene["goals"]])
 robot, _ = call("get_robot_info")
 cam, _ = call("get_camera_info")
 
-save_top_down_map()
+# Reset to default position
 face_north()
+save_top_down_map()
 
 # Terminal keyboard controls
 controls = {
@@ -274,43 +367,6 @@ except (KeyboardInterrupt, EOFError):
     print("\nExiting.")
 
 finally:
+    travelled_path.clear()
+    scene, _ = call("load_scene", id="01", seed=42)
     cmd.send_json({"type": "wheels", "left": 0.0, "right": 0.0})
-
-# # Wheels: rad/s per wheel, resend at 20 Hz (250 ms watchdog). Turn in place at 1 rad/s for 1.5 s.
-# turn_rate = 1.0
-# wheel_speed = turn_rate * robot["wheel_base"] / 2 / robot["wheel_radius"]
-# for _ in range(30):
-#     cmd.send_json({"type": "wheels", "left": -wheel_speed, "right": wheel_speed})
-#     time.sleep(0.05)
-# robot_state = json.loads(latest(state)[0])
-# print("after turning:", robot_state["pose"], robot_state["wheels"])
-
-# # goto 0.3 m straight ahead, then follow the state stream for 3 s.
-# pose = robot_state["pose"]
-# x = pose["x"] + 0.3 * math.cos(pose["yaw"])
-# y = pose["y"] + 0.3 * math.sin(pose["yaw"])
-# cmd.send_json({"type": "goto", "id": 1, "x": x, "y": y})
-# end = time.monotonic() + 3.0
-# while time.monotonic() < end:
-#     robot_state = json.loads(latest(state)[0])
-# print("goto:", robot_state["goto"], "pose:", robot_state["pose"], "bumper:", robot_state["bumper"])
-
-# # Camera: header, JPEG, uint16 depth (mm).
-# header, jpg, raw = latest(camera)
-# header = json.loads(header)
-# rgb = np.array(Image.open(io.BytesIO(jpg)))
-# depth = np.frombuffer(raw, "<u2").reshape(header["height"], header["width"]) * cam["depth_scale"]
-
-# # Back-project the centre pixel: pixel -> camera frame -> robot frame -> world frame.
-# u, v = header["width"] // 2, header["height"] // 2
-# z = depth[v, u]
-# x_camera = (u - cam["cx"]) * z / cam["fx"]
-# y_camera = (v - cam["cy"]) * z / cam["fy"]
-# p_camera = np.array([x_camera, y_camera, z, 1.0])
-# p_robot = np.array(cam["T_base_camera"]) @ p_camera
-# pose = header["pose"]
-# cos_yaw, sin_yaw = math.cos(pose["yaw"]), math.sin(pose["yaw"])
-# x_world = pose["x"] + cos_yaw * p_robot[0] - sin_yaw * p_robot[1]
-# y_world = pose["y"] + sin_yaw * p_robot[0] + cos_yaw * p_robot[1]
-# p_world = (x_world, y_world, p_robot[2])
-# print(f"camera seq {header['seq']}: rgb {rgb.shape}, centre depth {z:.3f} m -> world {np.round(p_world, 3)}")
