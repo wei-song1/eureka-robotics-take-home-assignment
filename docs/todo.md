@@ -15,6 +15,7 @@
 - [X] Find how to locate robot on the map
 - [X] Find how to locate goals on the map
 - [X] Find how to add trail for robot on the map
+- [ ] Add current time to top-down map since it's only updated when moving
 
 ## Camera Recording
 - [ ] Figure out how to get stream of robot and save it somehow

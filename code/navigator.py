@@ -38,10 +38,6 @@ camera.connect(url(3))
 camera.setsockopt(zmq.SUBSCRIBE, b"")
 
 
-travelled_path = []
-
-
-
 def call(method, **params):
     rpc.send_json({"method": method, "params": params})
     frames = rpc.recv_multipart()
@@ -164,7 +160,7 @@ def move_forward_one_robot_size(timeout=15):
             "right": 0.0,
         })
 
-def reach_goal(goal_name):
+def mark_goal(goal_name):
     result, _ = call("mark_goal", name=goal_name)
     print(f"Marked '{goal_name}' at simulation time {result['t']:.2f}s")
 
@@ -322,12 +318,34 @@ def save_top_down_map(filename="top_down_map.png"):
     print("Goals:", [goal["name"] for goal in goals])
     print("===================\n")
 
-# Load a scene, read the robot and camera info, save the map.
-print("scenes:", [s["id"] for s in call("list_scenes")[0]])
-scene, _ = call("load_scene", id="01", seed=42)
-print("start:", scene["start"], "goals:", [g["name"] for g in scene["goals"]])
+# Configuration
+scene_id = "01"
+seed = 42
+
+# Initialisation
+scenes, _ = call("list_scenes")
+
+def scene_label(s):
+    return f"{int(s['id'])} ({s['difficulty'].capitalize()})"
+
+print("Scenes available:", ", ".join(scene_label(s) for s in scenes))
+
+chosen = next(s for s in scenes if s["id"] == scene_id)
+scene, _ = call("load_scene", id=scene_id, seed=seed)
+
+print(f"\nScene chosen: {scene_label(chosen)}")
+print(f"Seed: {seed}")
+print("Goals:", [g["name"] for g in scene["goals"]])
+
+start = scene["start"]
+print(
+    f"Starting Position: x: {start['x']:.4f}, "
+    f"y: {start['y']:.4f}, yaw: {start['yaw']:.3f}"
+)
+
 robot, _ = call("get_robot_info")
 cam, _ = call("get_camera_info")
+travelled_path = []
 
 # Reset to default position
 face_north()
@@ -342,12 +360,12 @@ controls = {
     "q": turn_45d_anticlockwise,
     "e": turn_45d_clockwise,
     "f": move_forward_one_robot_size,
-    "r": reach_goal
+    "r": mark_goal
 }
 
 print("\nManual Robot Controls")
 print("Controls: W = North, S = South, D = East, A = West, ")
-print("Q = Turn Clockwise, E = Turn Anticlockwise, F = Move Foward, R <goal> = Reach Goal")
+print("Q = Turn Clockwise, E = Turn Anticlockwise, F = Move Foward, R <goal> = Mark Goal")
 print("Type a letter and press Enter. M = Quit.")
 
 try:
@@ -365,7 +383,7 @@ try:
                     print("Usage: r <goal_name>, e.g. r kitchen")
                     continue
 
-                reach_goal(parts[1])
+                mark_goal(parts[1])
             else:
                 action = controls.get(key)
 
