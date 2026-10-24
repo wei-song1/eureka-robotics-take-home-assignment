@@ -58,6 +58,9 @@ def latest(sock):
         msg = sock.recv_multipart()
     return msg
 
+
+
+# Robot Movement Functions
 def face_direction(yaw):
     wheel_base = robot["wheel_base"]
     wheel_radius = robot["wheel_radius"]
@@ -160,6 +163,10 @@ def move_forward_one_robot_size(timeout=15):
             "left": 0.0,
             "right": 0.0,
         })
+
+def reach_goal(goal_name):
+    result, _ = call("mark_goal", name=goal_name)
+    print(f"Marked '{goal_name}' at simulation time {result['t']:.2f}s")
 
 def save_top_down_map(filename="top_down_map.png"):
     map_info, frames = call("get_map")
@@ -335,12 +342,12 @@ controls = {
     "q": turn_45d_anticlockwise,
     "e": turn_45d_clockwise,
     "f": move_forward_one_robot_size,
-    "r": save_top_down_map
+    "r": reach_goal
 }
 
 print("\nManual Robot Controls")
 print("Controls: W = North, S = South, D = East, A = West, ")
-print("Q = Turn Clockwise, E = Turn Anticlockwise, F = Move Foward, R = Take Screenshot")
+print("Q = Turn Clockwise, E = Turn Anticlockwise, F = Move Foward, R <goal> = Reach Goal")
 print("Type a letter and press Enter. M = Quit.")
 
 try:
@@ -350,16 +357,27 @@ try:
         if key == "m":
             break
 
-        action = controls.get(key)
-
-        if action is None:
-            print("Invalid input. Use W, A, S, D, E, Q, F, R, or M to quit")
-            continue
+        parts = key.split(maxsplit=1)
 
         try:
-            action()
+            if parts and parts[0] == "r":
+                if len(parts) < 2:
+                    print("Usage: r <goal_name>, e.g. r kitchen")
+                    continue
+
+                reach_goal(parts[1])
+            else:
+                action = controls.get(key)
+
+                if action is None:
+                    print("Invalid input. Use W, A, S, D, E, Q, F, R <goal>, or M to quit")
+                    continue
+
+                action()
+
             save_top_down_map()
-            print("Finished turning.")
+            print("Finished action.")
+
         except TimeoutError as exc:
             print(f"Turn failed: {exc}")
 
