@@ -6,6 +6,7 @@ import simulator
 import movement
 import planner
 import map_renderer
+import camera_stream
 
 def save_navigation_snapshot():
     try:
@@ -144,73 +145,76 @@ def main():
     map_renderer.configure(simulator, travelled_path)
     planner.configure(simulator)
 
-    while selected_goal != 'Manual':
-        # End navigation process
-        if selected_goal == 'Quit':
-            return
+    with camera_stream.camera_session(simulator, cam, scene_id=scene_id, seed=seed) as camera_session, map_renderer.periodic_screenshots() as stop_screenshots:
+        while selected_goal != 'Manual':
+            # End navigation process
+            if selected_goal == 'Quit':
+                return
 
-        # A* Search
-        try:
-            navigate_to_goal(selected_goal)
-            return
+            # A* Search
+            try:
+                navigate_to_goal(selected_goal)
+                return
         
-        except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
-            print(f'Navigation failed: {exc}')
+            except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
+                print(f'Navigation failed: {exc}')
 
-        except KeyboardInterrupt:
-            print('\nNavigation interrupted.')
+            except KeyboardInterrupt:
+                print('\nNavigation interrupted.')
+
+            finally:
+                simulator.stop_robot()
+
+            # Restart Process
+            selected_goal = choose('What next?', goal_names + ['Manual', 'Quit'])
+
+        # Manual Process    
+        map_renderer.save_top_down_map()
+        controls = {'w': movement.face_north, 's': movement.face_south, 'd': movement.face_east, 'a': movement.face_west, 'q': movement.turn_45d_anticlockwise, 'e': movement.turn_45d_clockwise, 'f': movement.move_forward_one_robot_size}
+        print('\nManual Robot Controls')
+        print('W = North, S = South, D = East, A = West')
+        print('Q = Turn Anticlockwise, E = Turn Clockwise')
+        print('F = Move Forward, R <goal> = Mark Goal')
+        print('Type a letter and press Enter. M = Quit.')
+
+        try:
+            while True:
+                key = input('\nDirection> ').strip().lower()
+                if key == 'm':
+                    break
+
+                parts = key.split(maxsplit=1)
+                try:
+                    if parts and parts[0] == 'r':
+                        if len(parts) < 2:
+                            print('Usage: r <goal_name>, e.g. r kitchen')
+                            continue
+
+                        simulator.mark_goal(parts[1])
+
+                    else:
+                        action = controls.get(key)
+                        if action is None:
+                            print('Invalid input. Use W, A, S, D, E, Q, F, R <goal>, or M to quit.')
+                            continue
+
+                        action()
+
+                    map_renderer.save_top_down_map()
+                    print('Finished action.')
+
+                except TimeoutError as exc:
+                    print(f'Action failed: {exc}')
+
+        except (KeyboardInterrupt, EOFError):
+            print('\nExiting.')
 
         finally:
-            simulator.stop_robot()
-
-        # Restart Process
-        selected_goal = choose('What next?', goal_names + ['Manual', 'Quit'])
-
-    # Manual Process    
-    map_renderer.save_top_down_map()
-    controls = {'w': movement.face_north, 's': movement.face_south, 'd': movement.face_east, 'a': movement.face_west, 'q': movement.turn_45d_anticlockwise, 'e': movement.turn_45d_clockwise, 'f': movement.move_forward_one_robot_size}
-    print('\nManual Robot Controls')
-    print('W = North, S = South, D = East, A = West')
-    print('Q = Turn Anticlockwise, E = Turn Clockwise')
-    print('F = Move Forward, R <goal> = Mark Goal')
-    print('Type a letter and press Enter. M = Quit.')
-
-    try:
-        while True:
-            key = input('\nDirection> ').strip().lower()
-            if key == 'm':
-                break
-
-            parts = key.split(maxsplit=1)
-            try:
-                if parts and parts[0] == 'r':
-                    if len(parts) < 2:
-                        print('Usage: r <goal_name>, e.g. r kitchen')
-                        continue
-
-                    simulator.mark_goal(parts[1])
-
-                else:
-                    action = controls.get(key)
-                    if action is None:
-                        print('Invalid input. Use W, A, S, D, E, Q, F, R <goal>, or M to quit.')
-                        continue
-
-                    action()
-
-                map_renderer.save_top_down_map()
-                print('Finished action.')
-
-            except TimeoutError as exc:
-                print(f'Action failed: {exc}')
-
-    except (KeyboardInterrupt, EOFError):
-        print('\nExiting.')
-
-    finally:
-        simulator.send_command({'type': 'wheels', 'left': 0.0, 'right': 0.0})
-        travelled_path.clear()
-        scene, _ = simulator.call('load_scene', id=scene_id, seed=seed)
+            simulator.send_command({'type': 'wheels', 'left': 0.0, 'right': 0.0})
+            stop_screenshots()
+            camera_session.stop()
+            travelled_path.clear()
+            scene, _ = simulator.call('load_scene', id=scene_id, seed=seed)
 
 if __name__ == "__main__":
     main()

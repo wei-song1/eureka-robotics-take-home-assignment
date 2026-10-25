@@ -32,12 +32,12 @@
 - [X] Find a way to utilise the planning map
 
 ## Camera Recording
-- [ ] Figure out how to get stream of robot and save it somehow
+- [X] Figure out how to get stream of robot and save it somehow
 
 ## Visualise
-- [ ] Create UI using Qt
-- [ ] Show current time running
+- [X] Create UI using Qt
+- [X] Show current time running
 - [ ] Show robot pose (position, rotation, etc)
 - [ ] Show goal and end path
 - [ ] Show current top down world map
-- [ ] Show live camera feed from robot
+- [X] Show live camera feed from robot

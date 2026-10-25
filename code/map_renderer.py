@@ -1,20 +1,27 @@
-"""Original top-down trail and planned-map images, separate from occupancy."""
 import io
+import json
+import threading
+import time
+from contextlib import contextmanager
+from types import SimpleNamespace
+import zmq
 import math
 import numpy as np
 from PIL import Image, ImageDraw
 
 simulator = None
 travelled_path = None
+_image_save_lock = threading.Lock()
 
 def configure(simulator_value, travelled_path_value):
     global simulator, travelled_path
     simulator, travelled_path = simulator_value, travelled_path_value
 
-def save_top_down_map(filename='top_down_map.png', debug=False):
-    map_info, frames = simulator.call('get_map')
-    goals, _ = simulator.call('get_goals')
-    robot_state = simulator.read_state()
+def save_top_down_map(filename='top_down_map.png', debug=False, *, client=None):
+    client = simulator if client is None else client
+    map_info, frames = client.call('get_map')
+    goals, _ = client.call('get_goals')
+    robot_state = client.read_state()
     pose = robot_state['pose']
     travelled_path.append((pose['x'], pose['y']))
     resolution = map_info['resolution']
@@ -25,17 +32,21 @@ def save_top_down_map(filename='top_down_map.png', debug=False):
         pixel_x = (x - origin_x) / resolution - 0.5
         pixel_y = height - 0.5 - (y - origin_y) / resolution
         return (pixel_x, pixel_y)
+    
     image = Image.open(io.BytesIO(frames[0])).convert('RGB')
     draw = ImageDraw.Draw(image)
     path_pixels = [world_to_pixel(x, y) for x, y in travelled_path]
+
     if len(path_pixels) >= 2:
         draw.line(path_pixels, fill='blue', width=3)
+
     for goal in goals:
         goal_pose = goal['pose']
         goal_x, goal_y = goal_pose[:2]
         gx, gy = world_to_pixel(goal_x, goal_y)
         marker_radius = 5
         draw.ellipse((gx - marker_radius, gy - marker_radius, gx + marker_radius, gy + marker_radius), fill='yellow', outline='yellow', width=1)
+
         if len(goal_pose) > 2 and goal_pose[2] is not None:
             goal_yaw = goal_pose[2]
             heading_length = 0.25
@@ -43,7 +54,9 @@ def save_top_down_map(filename='top_down_map.png', debug=False):
             end_y = goal_y + heading_length * math.sin(goal_yaw)
             end_px, end_py = world_to_pixel(end_x, end_y)
             draw.line((gx, gy, end_px, end_py), fill='yellow', width=2)
+
         draw.text((gx + marker_radius + 3, gy - 8), goal['name'], fill='yellow', stroke_width=1, stroke_fill='black')
+
     pixel_x, pixel_y = world_to_pixel(pose['x'], pose['y'])
     robot_radius = 0.34 / 2
     radius_pixels = robot_radius / resolution
@@ -62,7 +75,10 @@ def save_top_down_map(filename='top_down_map.png', debug=False):
     perpendicular_x = -direction_y
     perpendicular_y = direction_x
     draw.polygon([(tip_x, tip_y), (base_x + head_half_width * perpendicular_x, base_y + head_half_width * perpendicular_y), (base_x - head_half_width * perpendicular_x, base_y - head_half_width * perpendicular_y)], fill='red')
-    image.save(filename, format='PNG')
+    
+    with _image_save_lock:
+        image.save(filename, format='PNG')
+        
     if debug:
         print('\n=== Debug Info ===')
         print(f'Map saved to {filename}')
@@ -97,3 +113,60 @@ def save_planned_map(planning_map, waypoints, filename='planned_map.png'):
             draw.ellipse((x - 3, y - 3, x + 3, y + 3), fill=colour)
     image.save(filename, format='PNG')
     print(f'A* plan saved to {filename}')
+
+
+@contextmanager
+def periodic_screenshots():
+    """Refresh top_down_map.png once per second until this scope exits."""
+    stop_event = threading.Event()
+
+    def take_screenshots():
+        # Each thread owns its sockets; navigation keeps using its own.
+        with simulator.ctx.socket(zmq.REQ) as rpc, simulator.ctx.socket(zmq.SUB) as state:
+            rpc.linger = state.linger = 0
+            rpc.rcvtimeo = rpc.sndtimeo = 1000
+            rpc.setsockopt(zmq.REQ_RELAXED, 1)
+            rpc.setsockopt(zmq.REQ_CORRELATE, 1)
+            rpc.connect(simulator.url(0))
+            state.setsockopt(zmq.SUBSCRIBE, b'')
+            state.connect(simulator.url(2))
+
+            def call(method, **params):
+                rpc.send_json({'method': method, 'params': params})
+                frames = rpc.recv_multipart()
+                reply = json.loads(frames[0])
+                if not reply['ok']:
+                    raise RuntimeError(reply['error'])
+                return reply['result'], frames[1:]
+
+            def read_state():
+                if not state.poll(500):
+                    raise TimeoutError('No robot state received')
+                return json.loads(simulator.latest(state)[0])
+
+            client = SimpleNamespace(call=call, read_state=read_state)
+            next_capture = time.monotonic()
+            while not stop_event.is_set():
+                try:
+                    save_top_down_map('top_down_map.png', client=client)
+                except (OSError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
+                    print(f'Could not save map snapshot: {exc}')
+
+                next_capture += 1.0
+                now = time.monotonic()
+                if next_capture < now:
+                    # Skip missed ticks instead of taking a burst of images.
+                    next_capture += math.ceil(now - next_capture)
+                stop_event.wait(max(0.0, next_capture - time.monotonic()))
+
+    thread = threading.Thread(target=take_screenshots, daemon=True)
+    thread.start()
+
+    def stop_screenshots():
+        stop_event.set()
+        thread.join()
+
+    try:
+        yield stop_screenshots
+    finally:
+        stop_screenshots()
