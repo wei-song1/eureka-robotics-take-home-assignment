@@ -1,1 +1,4 @@
 top_down_map.png
+planning_map.png
+__pycache__/
+*.py[cod]
