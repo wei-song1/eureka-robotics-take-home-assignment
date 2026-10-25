@@ -1,5 +1,6 @@
 import math
 import time
+from pathlib import Path
 import zmq
 
 import simulator
@@ -115,9 +116,8 @@ def choose(prompt, options, numbered=True):
         
         print('Please enter one of the listed options.')
 
-def main():
+def run_session():
     global robot, cam, travelled_path
-    simulator.initialise_client()
     scenes, _ = simulator.call('list_scenes')
     scene_options = {
         f"{s['id']}. {s['name'].title()} ({s['difficulty'].title()})": s['id']
@@ -138,6 +138,11 @@ def main():
     scene, _ = simulator.call('load_scene', id=scene_id, seed=seed)
     goal_names = [g['name'] for g in scene['goals']]
     selected_goal = choose('Which goal?', goal_names + ['Manual'])
+    for filename in ('top_down_map.png', 'planned_map.png'):
+        try:
+            Path(filename).unlink(missing_ok=True)
+        except OSError as exc:
+            print(f'Could not clear old map {filename}: {exc}')
     robot, _ = simulator.call('get_robot_info')
     cam, _ = simulator.call('get_camera_info')
     travelled_path = []
@@ -146,19 +151,18 @@ def main():
     map_renderer.configure(simulator, travelled_path)
     planner.configure(simulator)
 
-    with camera_stream.camera_session(simulator, cam, scene_id=scene_id, seed=seed, scene_info=next(s for s in scenes if s['id'] == scene_id), target_goal=selected_goal) as camera_session, map_renderer.periodic_screenshots() as stop_screenshots:
-        while selected_goal != 'Manual':
+    with camera_stream.camera_session(simulator, cam, scene_id=scene_id, seed=seed, scene_info=next(s for s in scenes if s['id'] == scene_id), target_goal=selected_goal, keep_ui_open=True) as camera_session, map_renderer.periodic_screenshots() as stop_screenshots:
+        if selected_goal != 'Manual':
             # End navigation process
             if selected_goal == 'Quit':
+                camera_session.request_close()
                 return
 
             # A* Search
             camera_session.set_target(selected_goal)
             try:
                 navigate_to_goal(selected_goal)
-                camera_session.wait_for_close()
-                return
-        
+
             except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
                 print(f'Navigation failed: {exc}')
 
@@ -170,12 +174,7 @@ def main():
             finally:
                 simulator.stop_robot()
 
-            # Restart Process
-            try:
-                selected_goal = choose('What next?', goal_names + ['Manual', 'Quit'])
-            except EOFError:
-                camera_session.wait_for_close(allow_terminal=False)
-                return
+            return scene_id, seed, camera_session
 
         # Manual Process    
         camera_session.set_target(None)
@@ -191,7 +190,8 @@ def main():
             while True:
                 key = input('\nDirection> ').strip().lower()
                 if key in ('m', 'quit', 'exit'):
-                    break
+                    camera_session.request_close()
+                    return
 
                 parts = key.split(maxsplit=1)
                 try:
@@ -202,6 +202,8 @@ def main():
 
                         simulator.mark_goal(parts[1])
                         camera_stream.goal_marked(parts[1])
+                        save_navigation_snapshot()
+                        return scene_id, seed, camera_session
 
                     else:
                         action = controls.get(key)
@@ -214,11 +216,13 @@ def main():
                     map_renderer.save_top_down_map()
                     print('Finished action.')
 
-                except TimeoutError as exc:
+                except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
                     print(f'Action failed: {exc}')
+                    return scene_id, seed, camera_session
 
         except KeyboardInterrupt:
             print('\nExiting.')
+            camera_session.request_close()
 
         except EOFError:
             camera_session.wait_for_close(allow_terminal=False)
@@ -226,9 +230,29 @@ def main():
         finally:
             simulator.send_command({'type': 'wheels', 'left': 0.0, 'right': 0.0})
             stop_screenshots()
-            camera_session.stop()
-            travelled_path.clear()
-            scene, _ = simulator.call('load_scene', id=scene_id, seed=seed)
+
+
+def main():
+    simulator.initialise_client()
+    while True:
+        result = run_session()
+        if result is None:
+            return
+
+        # Restart Process
+        scene_id, seed, camera_session = result
+        simulator.stop_robot()
+        camera_session.freeze_preview()
+        try:
+            simulator.call('reset', seed=seed)
+        except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
+            print(f'Could not reset scene {scene_id}: {exc}')
+        print('\nReady for a new run. Choose a scene, seed and goal again.')
 
 if __name__ == "__main__":
-    main()
+    import os
+    if os.environ.get('VACUUM_TERMINAL_MODE') == 'console' or os.environ.get('VACUUM_CAMERA_PREVIEW') == '0':
+        main()
+    else:
+        from camera_viewer import main as ui_main
+        raise SystemExit(ui_main(navigate=True))

@@ -193,6 +193,9 @@ class CameraSession:
         self.scene_info = dict(scene_info or {'id': scene_id, 'name': 'Unknown', 'difficulty': 'Unknown'})
         self.target_goal = target_goal
         self.marked_goals = set()
+        self.phase = 'navigating'
+        control = os.environ.get('VACUUM_UI_CONTROL_DIR')
+        self.ui_control_directory = Path(control) if control else None
 
     def _write_viewer_state(self):
         if self.directory is None:
@@ -201,7 +204,7 @@ class CameraSession:
         try:
             temporary = path.with_suffix('.tmp')
             write_json(temporary, {'scene': self.scene_info, 'target_goal': self.target_goal,
-                                   'marked_goals': sorted(self.marked_goals)})
+                                   'marked_goals': sorted(self.marked_goals), 'phase': self.phase})
             temporary.replace(path)
         except OSError as exc:
             print(f'[camera] Could not update viewer status: {exc}', flush=True)
@@ -216,10 +219,20 @@ class CameraSession:
             self.target_goal = name
         self._write_viewer_state()
 
+    def reset_for_next_run(self):
+        self.marked_goals.clear()
+        self.target_goal = 'Not selected'
+        self.phase = 'choosing'
+        self._write_viewer_state()
+
+    def freeze_preview(self):
+        self.phase = 'complete'
+        self._write_viewer_state()
+
     def start(self):
         record = os.environ.get('VACUUM_CAMERA_RECORD', '1').lower() not in ('0', 'false', 'no')
         preview = os.environ.get('VACUUM_CAMERA_PREVIEW', '1').lower() not in ('0', 'false', 'no')
-        if not record and not preview:
+        if not record and not preview and self.ui_control_directory is None:
             return self
         root = Path(os.environ.get('VACUUM_RECORDINGS_DIR', 'recordings'))
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')
@@ -227,6 +240,14 @@ class CameraSession:
         self.directory.mkdir(parents=True, exist_ok=False)
         write_json(self.directory / 'camera_info.json', self.camera_info)
         self._write_viewer_state()
+        if self.ui_control_directory is not None:
+            connection = self.ui_control_directory / 'connection.json'
+            temporary = connection.with_suffix('.tmp')
+            write_json(temporary, {
+                'endpoint': self.endpoint, 'camera_info': self.camera_info,
+                'viewer_state': str((self.directory / 'viewer_state.json').resolve()),
+            })
+            temporary.replace(connection)
         if record:
             try:
                 self.recorder = RGBDRecorder(self.directory, self.camera_info,
@@ -259,6 +280,11 @@ class CameraSession:
 
     def request_close(self):
         self.close_requested = True
+        if self.ui_control_directory is not None:
+            try:
+                (self.ui_control_directory / 'quit').touch()
+            except OSError as exc:
+                print(f'[camera] Could not send UI quit command: {exc}', flush=True)
         if self.viewer and self.directory:
             try:
                 (self.directory / 'viewer.stop').touch()
@@ -307,6 +333,11 @@ class CameraSession:
 
     def wait_for_close(self, allow_terminal=True):
         """Keep live viewing/recording until the window closes or quit is requested."""
+        if self.ui_control_directory is not None:
+            print('[camera] Navigation complete. Close the UI or type quit to finish.', flush=True)
+            while not self.close_requested and not (self.ui_control_directory / 'quit').exists():
+                time.sleep(.1)
+            return
         if self.viewer is None or self.viewer.poll() is not None:
             return
         print('[camera] Viewer remains open. Close the window, press Ctrl+C, '
@@ -325,11 +356,12 @@ class CameraSession:
             self.request_close()
             raise
 
-    def stop(self):
+    def stop(self, close_ui=True):
         if self.stopped:
             return
         self.stopped = True
-        self.request_close()
+        if close_ui:
+            self.request_close()
         if self.stream:
             self.stream.stop()
         if self.recorder:
@@ -358,7 +390,7 @@ class CameraSession:
 
 @contextmanager
 def camera_session(simulator, camera_info, scene_id=None, seed=None,
-                   scene_info=None, target_goal=None):
+                   scene_info=None, target_goal=None, keep_ui_open=False):
     global _active_session
     session = CameraSession(simulator, camera_info, scene_id, seed, scene_info, target_goal)
     previous_session = _active_session
@@ -371,4 +403,4 @@ def camera_session(simulator, camera_info, scene_id=None, seed=None,
         yield session
     finally:
         _active_session = previous_session
-        session.stop()
+        session.stop(close_ui=not keep_ui_open or session.ui_control_directory is None)
