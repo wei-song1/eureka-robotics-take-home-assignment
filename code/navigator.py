@@ -3,6 +3,7 @@ import sys
 import map_renderer
 import movement
 import simulator
+import planner
 
 
 def choose(prompt, options):
@@ -57,8 +58,7 @@ def main():
     selected_goal = choose("Which goal?", list(goal_options))
     selected_goal = goal_options[selected_goal]
 
-    if selected_goal != "Manual":
-        sys.exit(0)
+    
 
     # Start is coords and yaw of robot
     start = scene["start"]
@@ -71,65 +71,73 @@ def main():
 
     movement.face_north()
     map_renderer.save_top_down_map()
+    map_renderer.get_planning_map()
 
-    controls = {
-        "w": movement.face_north,
-        "s": movement.face_south,
-        "d": movement.face_east,
-        "a": movement.face_west,
-        "q": movement.turn_45d_anticlockwise,
-        "e": movement.turn_45d_clockwise,
-        "f": movement.move_forward_one_robot_size,
-        "z": map_renderer.get_planning_map,
-    }
+    if selected_goal == "Manual":
+        controls = {
+            "w": movement.face_north,
+            "s": movement.face_south,
+            "d": movement.face_east,
+            "a": movement.face_west,
+            "q": movement.turn_45d_anticlockwise,
+            "e": movement.turn_45d_clockwise,
+            "f": movement.move_forward_one_robot_size,
+            "z": map_renderer.get_planning_map,
+        }
 
-    print("\nManual Robot Controls")
-    print("W = North, S = South, D = East, A = West")
-    print("Q = Turn Anticlockwise, E = Turn Clockwise")
-    print("F = Move Forward, R <goal> = Mark Goal")
-    print("Type a letter and press Enter. M = Quit.")
+        print("\nManual Robot Controls")
+        print("W = North, S = South, D = East, A = West")
+        print("Q = Turn Anticlockwise, E = Turn Clockwise")
+        print("F = Move Forward, R <goal> = Mark Goal")
+        print("Type a letter and press Enter. M = Quit.")
 
-    try:
-        while True:
-            key = input("\nDirection> ").strip().lower()
+        try:
+            while True:
+                key = input("\nDirection> ").strip().lower()
 
-            if key == "m":
-                break
+                if key == "m":
+                    break
 
-            parts = key.split(maxsplit=1)
+                parts = key.split(maxsplit=1)
 
-            try:
-                if parts and parts[0] == "r":
-                    if len(parts) < 2:
-                        print("Usage: r <goal_name>, e.g. r kitchen")
-                        continue
+                try:
+                    if parts and parts[0] == "r":
+                        if len(parts) < 2:
+                            print("Usage: r <goal_name>, e.g. r kitchen")
+                            continue
 
-                    simulator.mark_goal(parts[1])
-                else:
-                    action = controls.get(key)
+                        simulator.mark_goal(parts[1])
+                    else:
+                        action = controls.get(key)
 
-                    if action is None:
-                        print(
-                            "Invalid input. Use W, A, S, D, E, Q, F, "
-                            "R <goal>, or M to quit."
-                        )
-                        continue
+                        if action is None:
+                            print(
+                                "Invalid input. Use W, A, S, D, E, Q, F, "
+                                "R <goal>, or M to quit."
+                            )
+                            continue
 
-                    action()
+                        action()
 
-                map_renderer.save_top_down_map()
-                print("Finished action.")
+                    map_renderer.save_top_down_map()
+                    print("Finished action.")
 
-            except TimeoutError as exc:
-                print(f"Action failed: {exc}")
+                except TimeoutError as exc:
+                    print(f"Action failed: {exc}")
 
-    except (KeyboardInterrupt, EOFError):
-        print("\nExiting.")
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting.")
 
-    finally:
-        simulator.stop_robot()
-        travelled_path.clear()
-        simulator.load_scene(scene_id, seed)
+        finally:
+            simulator.stop_robot()
+            travelled_path.clear()
+            simulator.load_scene(scene_id, seed)
+
+    if selected_goal != "Manual":
+        reached_goal = False
+        while not reached_goal:
+            route = planner.plan_route()
+            reached_goal = movement.do_route(route)
 
 
 if __name__ == "__main__":
