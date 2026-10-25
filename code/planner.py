@@ -6,8 +6,8 @@ import numpy as np
 from PIL import Image
 
 ROBOT_RADIUS = 0.17
-SAFETY_MARGIN = 0.10  # wide, traversable preference band outside hard clearance
-SAFETY_COST = 6.0  # movement in the safety band costs six times normal travel
+SAFETY_MARGIN = 0.10
+SAFETY_COST = 6.0
 simulator = None
 
 def configure(simulator_value):

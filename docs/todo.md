@@ -1,7 +1,7 @@
 # To Do List
 ## General
 - [X] Refactor entire codebase
-- [ ] Create files for camera, A* Search planner
+- [X] Create files for camera, A* Search planner
 
 ## Moveement
 - [X] Figure out how to do manual movement
@@ -28,8 +28,8 @@
     - Yellow for goal center
 
 ## Planner
-- [ ] Create A* Search
-- [ ] Find a way to utilise the planning map
+- [X] Create A* Search
+- [X] Find a way to utilise the planning map
 
 ## Camera Recording
 - [ ] Figure out how to get stream of robot and save it somehow
