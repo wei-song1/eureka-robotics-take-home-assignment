@@ -4,20 +4,21 @@
 
 - Python
 - Visual Studio Code
-- ChatGPT-6.1 Sol Medium ()
-
-# Screen Recording
-
-# Example Camera Recording
+- ChatGPT-6.1 Sol Medium
 
 # How to build, run and test it
-
+In first terminal,
 ```bash
 docker pull ghcr.io/eurekarobotics/vacuum-sim:1.0.0
 docker run --rm -p 5555-5558:5555-5558 -p 8080:8080 ghcr.io/eurekarobotics/vacuum-sim:1.0.0 --scene 01 --viewer
 ```
 
-Open http://localhost:8080 to watch the simulated world, then run one of the example clients.
+In second terminal,
+```bash
+python code/navigator.py
+```
+
+Open http://localhost:8080 to watch the simulated world. Follow instructions in second terminal. Watch simulated world go.
 
 # Documentation
 
