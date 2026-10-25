@@ -1,4 +1,3 @@
-"""Earlier navigator behaviour, split into separate modules. Run this file."""
 import math
 import time
 import zmq
@@ -9,20 +8,12 @@ import planner
 import map_renderer
 
 def save_navigation_snapshot():
-    """A failed debug image must not restart a successfully marked goal."""
     try:
         map_renderer.save_top_down_map()
     except (OSError, TimeoutError, zmq.ZMQError) as exc:
         print(f'Could not save map snapshot: {exc}')
 
 def navigate_to_goal(goal_name, max_replans=5):
-    """Retry failed navigation with fresh map data and a fresh robot pose.
-
-    max_replans counts additional attempts after the initial attempt. Keep
-    the scene loaded, so retries never reset the robot to its starting pose.
-    A persistent obstacle/no-path condition is bounded rather than retried
-    forever. Ctrl+C propagates immediately to the menu's interrupt handler.
-    """
     if max_replans < 0:
         raise ValueError('max_replans must be nonnegative')
     deadline = time.monotonic() + 600
@@ -86,11 +77,11 @@ def _navigate_to_goal_attempt(goal_name, deadline):
     finally:
         simulator.stop_robot()
 
-def choose(prompt, options):
+def choose(prompt, options, numbered=True):
     """Accept an option's name or its number."""
     print(f'\n{prompt}')
     for number, option in enumerate(options, start=1):
-        print(f'{number}. {option}')
+        print(f'{number}. {option}' if numbered else option)
     while True:
         answer = input('> ').strip()
         for option in options:
@@ -104,8 +95,11 @@ def main():
     global robot, cam, travelled_path
     simulator.initialise_client()
     scenes, _ = simulator.call('list_scenes')
-    scene_options = {f"{s['id']} ({s['difficulty'].lower()})": s['id'] for s in scenes}
-    selected_scene = choose('Which scene do you want?', list(scene_options))
+    scene_options = {
+        f"{s['id']}. {s['name'].title()} ({s['difficulty'].title()})": s['id']
+        for s in scenes
+    }
+    selected_scene = choose('Which scene do you want?', list(scene_options), numbered=False)
     scene_id = scene_options[selected_scene]
     print('\nWhat seed?')
     while True:
