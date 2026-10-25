@@ -1,3 +1,4 @@
+import math
 import sys
 
 import map_renderer
@@ -47,18 +48,23 @@ def main():
     # Scene has [id, start, goals], start is exact, goals are approximate
     scene = simulator.load_scene(scene_id, seed)
 
-    goal_names = [g["name"].capitalize() for g in scene["goals"]]
     goal_options = {
-        f"{index:02d}. {goal_name}": goal_name
-        for index, goal_name in enumerate(goal_names, start=1)
+        f"{index:02d}. {goal['name'].capitalize()}": goal
+        for index, goal in enumerate(scene["goals"], start=1)
     }
     manual_option = f"{len(goal_options) + 1:02d}. Manual"
-    goal_options[manual_option] = "Manual"
+    goal_options[manual_option] = None
 
-    selected_goal = choose("Which goal?", list(goal_options))
-    selected_goal = goal_options[selected_goal]
+    selected_goal_option = choose("Which goal?", list(goal_options))
+    selected_goal = goal_options[selected_goal_option]
 
-    
+    print("\nSelected scene: " + scene_id)
+    print("Seleceted seed: ", seed)
+    if selected_goal is None:
+        print("Selected goal: Manual")
+    else:
+        print("Selected goal: " + selected_goal["name"])
+        print("Selected goal pose:", selected_goal["pose"])
 
     # Start is coords and yaw of robot
     start = scene["start"]
@@ -66,14 +72,19 @@ def main():
     cam = simulator.get_camera_info()
     travelled_path = []
 
-    movement.configure(robot, simulator, travelled_path)
     map_renderer.configure(simulator, travelled_path)
+    movement.configure(
+        robot,
+        simulator,
+        travelled_path,
+        map_renderer.save_top_down_map,
+    )
 
     movement.face_north()
     map_renderer.save_top_down_map()
     map_renderer.get_planning_map()
 
-    if selected_goal == "Manual":
+    if selected_goal is None:
         controls = {
             "w": movement.face_north,
             "s": movement.face_south,
@@ -133,11 +144,34 @@ def main():
             travelled_path.clear()
             simulator.load_scene(scene_id, seed)
 
-    if selected_goal != "Manual":
-        reached_goal = False
-        while not reached_goal:
-            route = planner.plan_route()
-            reached_goal = movement.do_route(route)
+    if selected_goal is not None:
+        goal_pose = selected_goal["pose"]
+        while True:
+            map_info, _ = simulator.get_map()
+            planning_image = map_renderer.get_planning_map()
+            pose = simulator.read_state()["pose"]
+
+            route = planner.plan_route(map_info, planning_image, pose, goal_pose)
+            if not route:
+                raise RuntimeError("A* could not find a route to the goal.")
+
+            print(route)
+            movement.move_route(route, map_info)
+
+            pose = simulator.read_state()["pose"]
+            distance_to_goal = math.hypot(
+                goal_pose[0] - pose["x"],
+                goal_pose[1] - pose["y"],
+            )
+            if distance_to_goal <= 0.05:
+                goal_yaw = goal_pose[2] if len(goal_pose) > 2 else None
+
+                if goal_yaw is not None:
+                    movement.face_direction(goal_yaw)
+
+                simulator.mark_goal(selected_goal["name"])
+                print("Goal Reached")
+                break
 
 
 if __name__ == "__main__":

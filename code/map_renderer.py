@@ -192,7 +192,7 @@ def get_planning_map(filename="planning_map.png", debug=False):
     image = Image.open(io.BytesIO(frames[0])).convert("RGB")
 
     robot_radius = 0.34 / 2
-    safety_margin = 0.02
+    safety_margin = 0.1
 
     obstacles = np.asarray(image.convert("L")) == 255
 
@@ -219,21 +219,23 @@ def get_planning_map(filename="planning_map.png", debug=False):
 
     draw = ImageDraw.Draw(image)
 
-    if goals:
-        goal_x, goal_y = goals[0]["pose"][:2]
-        goal_pixel = world_to_pixel(goal_x, goal_y)
-        draw.point(
-            (round(goal_pixel[0]), round(goal_pixel[1])),
-            fill=GOAL_COLOUR,
-        )
+    # if goals:
+    #     goal_x, goal_y = goals[0]["pose"][:2]
+    #     goal_pixel = world_to_pixel(goal_x, goal_y)
+    #     draw.point(
+    #         (round(goal_pixel[0]), round(goal_pixel[1])),
+    #         fill=GOAL_COLOUR,
+    #     )
 
-    robot_pixel = world_to_pixel(pose["x"], pose["y"])
-    draw.point(
-        (round(robot_pixel[0]), round(robot_pixel[1])),
-        fill=ROBOT_COLOUR,
-    )
+    # robot_pixel = world_to_pixel(pose["x"], pose["y"])
+    # draw.point(
+    #     (round(robot_pixel[0]), round(robot_pixel[1])),
+    #     fill=ROBOT_COLOUR,
+    # )
 
     image.save(filename, format="PNG")
 
     if debug:
         print(f"Map saved to {filename}")
+
+    return image
