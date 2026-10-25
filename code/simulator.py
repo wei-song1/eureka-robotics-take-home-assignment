@@ -1,29 +1,32 @@
 import argparse
 import json
 import time
-
 import zmq
-
-ap = argparse.ArgumentParser()
-ap.add_argument("--host", default="localhost")
-ap.add_argument("--port-base", type=int, default=5555)
-args = ap.parse_args()
 
 def url(k):
     return f"tcp://{args.host}:{args.port_base + k}"
 
-ctx = zmq.Context()
-rpc = ctx.socket(zmq.REQ)
-rpc.connect(url(0))
-cmd = ctx.socket(zmq.PUSH)
-cmd.connect(url(1))
-state = ctx.socket(zmq.SUB)
-state.connect(url(2))
-state.setsockopt(zmq.SUBSCRIBE, b"")
-camera = ctx.socket(zmq.SUB)
-camera.setsockopt(zmq.RCVHWM, 2)
-camera.connect(url(3))
-camera.setsockopt(zmq.SUBSCRIBE, b"")
+def initialise_client():
+    global args, ctx, rpc, cmd, state, camera
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="localhost")
+    ap.add_argument("--port-base", type=int, default=5555)
+    args = ap.parse_args()
+    ctx = zmq.Context()
+    rpc = ctx.socket(zmq.REQ)
+    rpc.setsockopt(zmq.RCVTIMEO, 5000)
+    rpc.setsockopt(zmq.SNDTIMEO, 5000)
+    rpc.connect(url(0))
+    cmd = ctx.socket(zmq.PUSH)
+    cmd.setsockopt(zmq.SNDTIMEO, 1000)
+    cmd.connect(url(1))
+    state = ctx.socket(zmq.SUB)
+    state.connect(url(2))
+    state.setsockopt(zmq.SUBSCRIBE, b"")
+    camera = ctx.socket(zmq.SUB)
+    camera.setsockopt(zmq.RCVHWM, 2)
+    camera.connect(url(3))
+    camera.setsockopt(zmq.SUBSCRIBE, b"")
 
 def call(method, **params):
     rpc.send_json({"method": method, "params": params})
@@ -33,43 +36,39 @@ def call(method, **params):
         raise RuntimeError(rep["error"])
     return rep["result"], frames[1:]
 
-
 def latest(sock):
+    """Most recent message: drop anything queued (streams are 'latest wins')."""
     msg = sock.recv_multipart()
     while sock.poll(0):
         msg = sock.recv_multipart()
     return msg
 
+def stop_robot():
+    # Wheel commands pre-empt goto; goto itself has no watchdog.
+    send_command({"type": "wheels", "left": 0.0, "right": 0.0})
+
+def mark_goal(goal_name):
+    result, _ = call("mark_goal", name=goal_name)
+    print(f"Marked '{goal_name}' at simulation time {result['t']:.2f}s")
+
+def send_command(command):
+    cmd.send_json(command)
+
+def wait_for_state(timeout_ms):
+    return state.poll(timeout_ms)
 
 def read_state(timeout_ms=500):
-    if not state.poll(timeout_ms):
+    if not wait_for_state(timeout_ms):
         raise TimeoutError("No robot state received")
-
     return json.loads(latest(state)[0])
 
-
 def set_wheel_speeds(left, right):
-    cmd.send_json({
-        "type": "wheels",
-        "left": left,
-        "right": right,
-    })
-
+    send_command({"type": "wheels", "left": left, "right": right})
 
 def goto(x, y):
     command_id = time.time_ns()
-    cmd.send_json({
-        "type": "goto",
-        "id": command_id,
-        "x": x,
-        "y": y,
-    })
+    send_command({"type": "goto", "id": command_id, "x": x, "y": y})
     return command_id
-
-
-def stop_robot():
-    set_wheel_speeds(0.0, 0.0)
-
 
 def ping():
     '''
