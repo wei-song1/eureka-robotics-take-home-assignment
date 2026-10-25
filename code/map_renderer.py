@@ -1,13 +1,19 @@
 import io
 import math
+import numpy as np
 
-from PIL import Image, ImageDraw
+
+from PIL import Image, ImageChops, ImageDraw
+from scipy.ndimage import distance_transform_edt
 
 GOAL_COLOUR = "yellow"
 TRAIL_COLOUR = "blue"
 ROBOT_COLOUR = "green"
 ROBOT_POINTER_COLOUR = "lime"
+WALL_COLOUR = "white"
+SAFETY_MARGIN_COLOUR = "gray"
 OUTLINE_COLOUR = "black"
+WALL_MARGIN_COLOUR = "grey"
 
 simulator = None
 travelled_path = None
@@ -17,6 +23,8 @@ def configure(simulator_value, travelled_path_value):
     simulator = simulator_value
     travelled_path = travelled_path_value
 
+# For human visualisation
+# Shows robot, robot's direction, robot's trail, goal, goal name
 def save_top_down_map(filename="top_down_map.png", debug=False):
     map_info, frames = simulator.get_map()
     goals = simulator.get_goals()
@@ -161,3 +169,71 @@ def save_top_down_map(filename="top_down_map.png", debug=False):
         print(f"Robot diameter on image: {2 * radius_pixels:.1f} pixels")
         print("Goals:", [goal["name"] for goal in goals])
         print("===================\n")
+
+# For planning
+# Represent's center of robot as green dot, center of goal as yellow dot
+# Expands walls so it take's in mind the robot's size, added grey safety margins around
+def get_planning_map(filename="planning_map.png", debug=False):
+    map_info, frames = simulator.get_map()
+    goals = simulator.get_goals()
+
+    robot_state = simulator.read_state()
+    pose = robot_state["pose"]
+
+    resolution = map_info["resolution"]
+    origin_x, origin_y = map_info["origin"]
+    height = map_info["height"]
+
+    def world_to_pixel(x, y):
+        pixel_x = (x - origin_x) / resolution - 0.5
+        pixel_y = height - 0.5 - (y - origin_y) / resolution
+        return pixel_x, pixel_y
+
+    image = Image.open(io.BytesIO(frames[0])).convert("RGB")
+
+    robot_radius = 0.34 / 2
+    safety_margin = 0.02
+
+    obstacles = np.asarray(image.convert("L")) == 255
+
+    if obstacles.any():
+        distance = distance_transform_edt(
+            ~obstacles,
+            sampling=resolution,
+        )
+    else:
+        distance = np.full(obstacles.shape, np.inf)
+
+    occupied = distance <= robot_radius
+
+    safety_area = (
+        (distance > robot_radius)
+        & (distance <= robot_radius + safety_margin)
+    )
+
+    occupied_mask = Image.fromarray(occupied.astype(np.uint8) * 255)
+    safety_mask = Image.fromarray(safety_area.astype(np.uint8) * 255)
+
+    image.paste(SAFETY_MARGIN_COLOUR, mask=safety_mask)
+    image.paste(WALL_COLOUR, mask=occupied_mask)
+
+    draw = ImageDraw.Draw(image)
+
+    if goals:
+        goal_x, goal_y = goals[0]["pose"][:2]
+        goal_pixel = world_to_pixel(goal_x, goal_y)
+        draw.point(
+            (round(goal_pixel[0]), round(goal_pixel[1])),
+            fill=GOAL_COLOUR,
+        )
+
+    robot_pixel = world_to_pixel(pose["x"], pose["y"])
+    draw.point(
+        (round(robot_pixel[0]), round(robot_pixel[1])),
+        fill=ROBOT_COLOUR,
+    )
+
+    image.save(filename, format="PNG")
+
+    if debug:
+        print(f"Map saved to {filename}")

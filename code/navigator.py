@@ -80,6 +80,7 @@ def main():
         "q": movement.turn_45d_anticlockwise,
         "e": movement.turn_45d_clockwise,
         "f": movement.move_forward_one_robot_size,
+        "z": map_renderer.get_planning_map,
     }
 
     print("\nManual Robot Controls")
