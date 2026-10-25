@@ -63,6 +63,7 @@ def _navigate_to_goal_attempt(goal_name, deadline):
 
                 if math.dist((pose['x'], pose['y']), target) <= 0.04 and error <= math.radians(4):
                     simulator.mark_goal(goal_name)
+                    camera_stream.goal_marked(goal_name)
                     print('\nGoal reached and marked.')
                     save_navigation_snapshot()
                     return
@@ -145,15 +146,17 @@ def main():
     map_renderer.configure(simulator, travelled_path)
     planner.configure(simulator)
 
-    with camera_stream.camera_session(simulator, cam, scene_id=scene_id, seed=seed) as camera_session, map_renderer.periodic_screenshots() as stop_screenshots:
+    with camera_stream.camera_session(simulator, cam, scene_id=scene_id, seed=seed, scene_info=next(s for s in scenes if s['id'] == scene_id), target_goal=selected_goal) as camera_session, map_renderer.periodic_screenshots() as stop_screenshots:
         while selected_goal != 'Manual':
             # End navigation process
             if selected_goal == 'Quit':
                 return
 
             # A* Search
+            camera_session.set_target(selected_goal)
             try:
                 navigate_to_goal(selected_goal)
+                camera_session.wait_for_close()
                 return
         
             except (ValueError, RuntimeError, TimeoutError, zmq.ZMQError) as exc:
@@ -161,26 +164,33 @@ def main():
 
             except KeyboardInterrupt:
                 print('\nNavigation interrupted.')
+                camera_session.request_close()
+                return
 
             finally:
                 simulator.stop_robot()
 
             # Restart Process
-            selected_goal = choose('What next?', goal_names + ['Manual', 'Quit'])
+            try:
+                selected_goal = choose('What next?', goal_names + ['Manual', 'Quit'])
+            except EOFError:
+                camera_session.wait_for_close(allow_terminal=False)
+                return
 
         # Manual Process    
+        camera_session.set_target(None)
         map_renderer.save_top_down_map()
         controls = {'w': movement.face_north, 's': movement.face_south, 'd': movement.face_east, 'a': movement.face_west, 'q': movement.turn_45d_anticlockwise, 'e': movement.turn_45d_clockwise, 'f': movement.move_forward_one_robot_size}
         print('\nManual Robot Controls')
         print('W = North, S = South, D = East, A = West')
         print('Q = Turn Anticlockwise, E = Turn Clockwise')
         print('F = Move Forward, R <goal> = Mark Goal')
-        print('Type a letter and press Enter. M = Quit.')
+        print('Type a letter and press Enter. M, quit, or exit = Quit.')
 
         try:
             while True:
                 key = input('\nDirection> ').strip().lower()
-                if key == 'm':
+                if key in ('m', 'quit', 'exit'):
                     break
 
                 parts = key.split(maxsplit=1)
@@ -191,6 +201,7 @@ def main():
                             continue
 
                         simulator.mark_goal(parts[1])
+                        camera_stream.goal_marked(parts[1])
 
                     else:
                         action = controls.get(key)
@@ -206,8 +217,11 @@ def main():
                 except TimeoutError as exc:
                     print(f'Action failed: {exc}')
 
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt:
             print('\nExiting.')
+
+        except EOFError:
+            camera_session.wait_for_close(allow_terminal=False)
 
         finally:
             simulator.send_command({'type': 'wheels', 'left': 0.0, 'right': 0.0})

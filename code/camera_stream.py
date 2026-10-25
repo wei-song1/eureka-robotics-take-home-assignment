@@ -19,6 +19,14 @@ from PIL import Image
 
 from recorder import RGBDRecorder, write_json
 
+_active_session = None
+
+
+def goal_marked(name):
+    """Notify the viewer after the simulator has accepted a mark_goal call."""
+    if _active_session is not None:
+        _active_session.goal_marked(name)
+
 
 @dataclass(frozen=True)
 class CameraPacket:
@@ -170,7 +178,8 @@ class CameraStream:
 
 
 class CameraSession:
-    def __init__(self, simulator, camera_info, scene_id=None, seed=None):
+    def __init__(self, simulator, camera_info, scene_id=None, seed=None,
+                 scene_info=None, target_goal=None):
         self.endpoint = simulator.url(3)
         self.camera_info = dict(camera_info)
         self.scene_id, self.seed = scene_id, seed
@@ -178,6 +187,34 @@ class CameraSession:
         self.viewer_log = None
         self.directory = None
         self.stopped = False
+        self.close_requested = False
+        self._terminal_available = True
+        self._command_buffer = ''
+        self.scene_info = dict(scene_info or {'id': scene_id, 'name': 'Unknown', 'difficulty': 'Unknown'})
+        self.target_goal = target_goal
+        self.marked_goals = set()
+
+    def _write_viewer_state(self):
+        if self.directory is None:
+            return
+        path = self.directory / 'viewer_state.json'
+        try:
+            temporary = path.with_suffix('.tmp')
+            write_json(temporary, {'scene': self.scene_info, 'target_goal': self.target_goal,
+                                   'marked_goals': sorted(self.marked_goals)})
+            temporary.replace(path)
+        except OSError as exc:
+            print(f'[camera] Could not update viewer status: {exc}', flush=True)
+
+    def set_target(self, name):
+        self.target_goal = None if name in (None, 'Manual') else name
+        self._write_viewer_state()
+
+    def goal_marked(self, name):
+        self.marked_goals.add(name)
+        if self.target_goal in (None, 'Manual'):
+            self.target_goal = name
+        self._write_viewer_state()
 
     def start(self):
         record = os.environ.get('VACUUM_CAMERA_RECORD', '1').lower() not in ('0', 'false', 'no')
@@ -189,6 +226,7 @@ class CameraSession:
         self.directory = root / f'{stamp}_{uuid.uuid4().hex[:8]}'
         self.directory.mkdir(parents=True, exist_ok=False)
         write_json(self.directory / 'camera_info.json', self.camera_info)
+        self._write_viewer_state()
         if record:
             try:
                 self.recorder = RGBDRecorder(self.directory, self.camera_info,
@@ -213,13 +251,85 @@ class CameraSession:
                     '--endpoint', self.endpoint,
                     '--camera-info', str((self.directory / 'camera_info.json').resolve()),
                     '--stop-file', str((self.directory / 'viewer.stop').resolve()),
+                    '--planned-map', str(Path('planned_map.png').resolve()),
+                    '--top-down-map', str(Path('top_down_map.png').resolve()),
+                    '--viewer-state', str((self.directory / 'viewer_state.json').resolve()),
                 ], stdout=self.viewer_log, stderr=subprocess.STDOUT)
         return self
+
+    def request_close(self):
+        self.close_requested = True
+        if self.viewer and self.directory:
+            try:
+                (self.directory / 'viewer.stop').touch()
+            except OSError as exc:
+                print(f'[camera] Could not send viewer quit command: {exc}', flush=True)
+
+    def _poll_terminal_command(self):
+        if not self._terminal_available:
+            return None
+        try:
+            if sys.platform == 'win32':
+                if not sys.stdin.isatty():
+                    self._terminal_available = False
+                    return None
+                import msvcrt
+                if not msvcrt.kbhit():
+                    return None
+                char = msvcrt.getwch()
+                if char == '\x03':
+                    raise KeyboardInterrupt
+                if char in ('\x00', '\xe0'):
+                    msvcrt.getwch()
+                elif char in ('\r', '\n'):
+                    print('', flush=True)
+                    command, self._command_buffer = self._command_buffer, ''
+                    return command
+                elif char == '\b':
+                    if self._command_buffer:
+                        self._command_buffer = self._command_buffer[:-1]
+                        print('\b \b', end='', flush=True)
+                else:
+                    self._command_buffer += char
+                    print(char, end='', flush=True)
+            else:
+                import select
+                ready, _, _ = select.select([sys.stdin], [], [], 0)
+                if ready:
+                    line = sys.stdin.readline()
+                    if line == '':
+                        self._terminal_available = False
+                    else:
+                        return line.strip()
+        except (OSError, ValueError, AttributeError):
+            self._terminal_available = False
+        return None
+
+    def wait_for_close(self, allow_terminal=True):
+        """Keep live viewing/recording until the window closes or quit is requested."""
+        if self.viewer is None or self.viewer.poll() is not None:
+            return
+        print('[camera] Viewer remains open. Close the window, press Ctrl+C, '
+              'or type quit then Enter.', flush=True)
+        try:
+            while self.viewer.poll() is None and not self.close_requested:
+                command = self._poll_terminal_command() if allow_terminal else None
+                if command is not None:
+                    if command.casefold().strip() in ('quit', 'exit'):
+                        self.request_close()
+                        break
+                    if command.strip():
+                        print('[camera] Type quit then Enter to close the viewer.', flush=True)
+                time.sleep(.1)
+        except KeyboardInterrupt:
+            self.request_close()
+            raise
 
     def stop(self):
         if self.stopped:
             return
         self.stopped = True
+        self.request_close()
         if self.stream:
             self.stream.stop()
         if self.recorder:
@@ -247,13 +357,18 @@ class CameraSession:
 
 
 @contextmanager
-def camera_session(simulator, camera_info, scene_id=None, seed=None):
-    session = CameraSession(simulator, camera_info, scene_id, seed)
+def camera_session(simulator, camera_info, scene_id=None, seed=None,
+                   scene_info=None, target_goal=None):
+    global _active_session
+    session = CameraSession(simulator, camera_info, scene_id, seed, scene_info, target_goal)
+    previous_session = _active_session
     try:
         try:
             session.start()
         except Exception as exc:
             print(f'[camera] Camera startup failed: {exc}', flush=True)
+        _active_session = session
         yield session
     finally:
+        _active_session = previous_session
         session.stop()

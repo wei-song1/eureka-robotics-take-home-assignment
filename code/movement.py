@@ -96,7 +96,7 @@ def read_navigation_state():
     travelled_path.append((message['pose']['x'], message['pose']['y']))
     return message
 
-def drive_to_waypoint(target, planning_map, timeout=30):
+def drive_to_waypoint(target, planning_map, timeout=10):
     message = read_navigation_state()
     pose = message['pose']
 

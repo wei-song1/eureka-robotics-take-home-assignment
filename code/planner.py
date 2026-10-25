@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 
 ROBOT_RADIUS = 0.17
-SAFETY_MARGIN = 0.10
+SAFETY_MARGIN = 0.17
 SAFETY_COST = 6.0
 simulator = None
 

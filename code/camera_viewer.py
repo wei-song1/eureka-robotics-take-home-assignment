@@ -1,13 +1,58 @@
 """Standalone Qt RGB/depth viewer; closing it does not stop robot navigation."""
 import argparse
 import json
+import math
 from pathlib import Path
+import signal
 import sys
-import time
 
 import numpy as np
 
 from camera_stream import CameraStream, decode_camera_packet, depth_preview
+
+
+def format_viewer_status(state, header=None):
+    scene = state.get('scene') or {}
+    scene_id = scene.get('id') or '--'
+    name = str(scene.get('name') or 'Unknown').title()
+    difficulty = str(scene.get('difficulty') or 'Unknown').title()
+    target = state.get('target_goal')
+    target_text = target if target not in (None, 'Manual') else 'None (Manual)'
+    marked = target is not None and any(
+        str(goal).casefold() == str(target).casefold()
+        for goal in state.get('marked_goals', []))
+    if header is None:
+        time_text = '--'
+        pose_text = 'x - --, y - --, -- deg'
+    else:
+        pose = header['pose']
+        time_text = f"{header['t']:.2f}"
+        pose_text = f"x - {pose['x']:.3f}, y - {pose['y']:.3f}, {math.degrees(pose['yaw']):.1f} deg"
+    return (f'Scene {scene_id} - {name} ({difficulty})\n'
+            f'Target Goal: {target_text}\n'
+            f'Time: {time_text} s\n'
+            f'Pose: {pose_text}\n'
+            f"Goal: {'Marked' if marked else 'Unmarked'}")
+
+
+class MapImageFile:
+    """Retry incomplete PNG writes and keep the last successfully shown image."""
+    def __init__(self, path):
+        self.path = Path(path)
+        self.loaded_stamp = None
+
+    def read_if_changed(self):
+        try:
+            stat = self.path.stat()
+            stamp = stat.st_mtime_ns, stat.st_size
+            if stamp == self.loaded_stamp:
+                return None
+            return self.path.read_bytes(), stamp
+        except OSError:
+            return None
+
+    def mark_loaded(self, stamp):
+        self.loaded_stamp = stamp
 
 
 def load_camera_info(host, port):
@@ -32,11 +77,14 @@ def main():
     parser.add_argument('--endpoint')
     parser.add_argument('--camera-info')
     parser.add_argument('--stop-file')
+    parser.add_argument('--planned-map', default='planned_map.png')
+    parser.add_argument('--top-down-map', default='top_down_map.png')
+    parser.add_argument('--viewer-state')
     args = parser.parse_args()
     try:
         from PySide6.QtCore import Qt, QTimer
         from PySide6.QtGui import QImage, QPixmap
-        from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout
+        from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QWidget, QGridLayout, QVBoxLayout, QPushButton
     except ImportError as exc:
         raise SystemExit('Install PySide6 to use the camera viewer: pip install PySide6') from exc
 
@@ -93,28 +141,82 @@ def main():
     class CameraWindow(QMainWindow):
         def __init__(self):
             super().__init__()
-            self.setWindowTitle('Robot RGBD Camera')
-            self.resize(1100, 500)
+            self.setWindowTitle('Robot Camera and Maps')
+            self.resize(1200, 900)
             self.last_frame = None
+            self.viewer_state = {}
+            self.current_header = None
+            self.state_file = MapImageFile(args.viewer_state) if args.viewer_state else None
             root = QWidget()
             layout = QVBoxLayout(root)
-            panels = QHBoxLayout()
+            self.status = QLabel(format_viewer_status(self.viewer_state))
+            panels = QGridLayout()
             self.rgb = ImagePanel('Waiting for RGB camera...')
             self.depth = ImagePanel('Waiting for depth camera...', self.set_hover)
-            for title, panel in (('RGB', self.rgb), ('Depth: near = white, far / invalid = black', self.depth)):
+            self.top_down = ImagePanel('Waiting for top_down_map.png...')
+            self.planned = ImagePanel('Waiting for planned_map.png...')
+            for row, col, title, panel in (
+                    (0, 0, 'RGB Camera', self.rgb),
+                    (0, 1, 'Depth Camera', self.depth),
+                    (1, 0, 'Map (Might not be accurate to real world)', self.top_down),
+                    (1, 1, "Robot's view", self.planned)):
                 column = QVBoxLayout()
                 column.addWidget(QLabel(title))
                 column.addWidget(panel, 1)
-                panels.addLayout(column, 1)
+                panels.addLayout(column, row, col)
             layout.addLayout(panels, 1)
-            self.status = QLabel('Waiting for camera messages...')
-            self.hover = QLabel('Move the pointer over the depth image to read metres.')
             layout.addWidget(self.status)
+            self.hover = QLabel('Move the pointer over the depth image to read metres.')
             layout.addWidget(self.hover)
+            quit_button = QPushButton('Quit viewer')
+            quit_button.clicked.connect(self.close)
+            layout.addWidget(quit_button)
             self.setCentralWidget(root)
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.update_camera)
             self.timer.start(33)
+            self.map_files = (
+                (self.top_down, MapImageFile(args.top_down_map)),
+                (self.planned, MapImageFile(args.planned_map)),
+            )
+            self.map_timer = QTimer(self)
+            self.map_timer.timeout.connect(self.update_maps)
+            self.map_timer.timeout.connect(self.update_viewer_state)
+            self.map_timer.start(250)
+            self.update_viewer_state()
+            self.update_maps()
+
+        def update_viewer_state(self):
+            if self.state_file is None:
+                return
+            result = self.state_file.read_if_changed()
+            if result is None:
+                return
+            data, stamp = result
+            try:
+                state = json.loads(data)
+                if (not isinstance(state, dict) or not isinstance(state.get('scene'), dict)
+                        or not isinstance(state.get('marked_goals'), list)):
+                    return
+                text = format_viewer_status(state, self.current_header)
+            except (ValueError, TypeError, KeyError):
+                return
+            self.viewer_state = state
+            self.status.setText(text)
+            self.state_file.mark_loaded(stamp)
+
+        def update_maps(self):
+            for panel, file in self.map_files:
+                result = file.read_if_changed()
+                if result is None:
+                    continue
+                data, stamp = result
+                image = QImage.fromData(data)
+                if image.isNull():
+                    continue
+                panel.image = image
+                panel.render()
+                file.mark_loaded(stamp)
 
         def set_hover(self, text):
             self.hover.setText(text)
@@ -123,19 +225,16 @@ def main():
             if args.stop_file and Path(args.stop_file).exists():
                 self.close()
                 return
-            packet, error, gaps = stream.snapshot()
+            packet, error, _ = stream.snapshot()
+            if packet is not None:
+                self.current_header = packet.header
+            self.status.setText(format_viewer_status(self.viewer_state, self.current_header))
             if error:
-                self.status.setText(f'Camera error: {error}')
+                self.statusBar().showMessage(f'Camera error: {error}')
                 return
             if packet is None:
                 return
             header = packet.header
-            age = (time.monotonic_ns() - packet.received_monotonic_ns) / 1e9
-            pose = header['pose']
-            self.status.setText(
-                f"t={header['t']:.3f}s | seq={header['seq']} | "
-                f"x={pose['x']:.2f} m, y={pose['y']:.2f} m | "
-                f"frame age={age:.2f}s | sequence gaps={gaps}")
             key = packet.segment, header['seq'], header['t']
             if key == self.last_frame:
                 return
@@ -144,20 +243,24 @@ def main():
                 rgb, raw_depth, metres = decode_camera_packet(packet, camera_info)
                 self.rgb.set_array(rgb)
                 self.depth.set_array(depth_preview(raw_depth, camera_info), metres)
+                self.statusBar().clearMessage()
             except (ValueError, OSError) as exc:
-                self.status.setText(f'Could not decode camera frame: {exc}')
+                self.statusBar().showMessage(f'Could not decode camera frame: {exc}')
 
         def closeEvent(self, event):
             self.timer.stop()
+            self.map_timer.stop()
             stream.stop()
             super().closeEvent(event)
 
     app = QApplication(sys.argv[:1])
     window = CameraWindow()
     window.show()
+    previous_sigint = signal.signal(signal.SIGINT, lambda *_: window.close())
     try:
         return app.exec()
     finally:
+        signal.signal(signal.SIGINT, previous_sigint)
         stream.stop()
 
 
