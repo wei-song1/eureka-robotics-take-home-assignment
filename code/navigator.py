@@ -17,7 +17,7 @@ def save_navigation_snapshot():
     except (OSError, TimeoutError, zmq.ZMQError) as exc:
         print(f'Could not save map snapshot: {exc}')
 
-def navigate_to_goal(goal_name, max_replans=5):
+def navigate_to_goal(goal_name, max_replans=10):
     if max_replans < 0:
         raise ValueError('max_replans must be nonnegative')
     
