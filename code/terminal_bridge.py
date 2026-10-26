@@ -35,6 +35,7 @@ class NavigatorProcess:
 
     def start(self):
         environment = dict(os.environ)
+        # The child uses a private control directory for cooperative shutdown.
         environment.update(PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8',
                            VACUUM_CAMERA_PREVIEW='0',
                            VACUUM_UI_CONTROL_DIR=str(self.control_directory))

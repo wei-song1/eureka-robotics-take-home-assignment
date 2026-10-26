@@ -35,6 +35,7 @@ def save_top_down_map(filename='top_down_map.png', debug=False, *, client=None):
     height = map_info['height']
 
     def world_to_pixel(x, y):
+        # Map images use a top-left origin, unlike the simulator's world frame.
         pixel_x = (x - origin_x) / resolution - 0.5
         pixel_y = height - 0.5 - (y - origin_y) / resolution
         return (pixel_x, pixel_y)

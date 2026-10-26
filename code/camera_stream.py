@@ -40,6 +40,7 @@ class CameraPacket:
 
 
 def parse_camera_message(frames, camera_info=None, segment=0):
+    # Validate the header before allocating or reshaping the depth payload.
     if len(frames) != 3:
         raise ValueError('Camera message must contain header, JPEG and depth')
     header = json.loads(frames[0])

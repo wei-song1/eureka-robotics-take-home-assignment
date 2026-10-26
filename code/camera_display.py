@@ -32,6 +32,7 @@ def format_viewer_status(state, header=None):
 
 def depth_preview(depth_u16, camera_info):
     """Fixed 0..max_depth grayscale: near is white, far/invalid is black."""
+    # Keep invalid depth black instead of letting the scale turn it white.
     metres = depth_u16.astype(np.float32) * camera_info['depth_scale']
     brightness = np.clip(1 - metres / camera_info['max_depth'], 0, 1)
     image = (brightness * 255).astype(np.uint8)

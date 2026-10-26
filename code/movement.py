@@ -32,6 +32,7 @@ def face_direction(yaw):
                 raise TimeoutError('No robot state received')
             
             pose = simulator.read_state()['pose']
+            # Wrap the error so the robot takes the shortest turn across +/- pi.
             error = math.atan2(math.sin(yaw - pose['yaw']), math.cos(yaw - pose['yaw']))
 
             if abs(error) < math.radians(3):

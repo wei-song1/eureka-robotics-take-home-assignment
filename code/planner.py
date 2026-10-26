@@ -52,6 +52,7 @@ class PlanningMap:
                         self.blocked |= shifted
         self.safety = expanded & ~self.blocked
         self.cost = np.ones(self.occupied.shape, dtype=float)
+        # A* may cross the safety band, but hard-inflated cells remain forbidden.
         self.cost[self.safety] = safety_cost
         self.cost[self.blocked] = math.inf
 

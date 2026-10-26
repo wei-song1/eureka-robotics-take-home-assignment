@@ -103,6 +103,7 @@ class NavigationMap:
             raise ValueError('Depth dimensions changed during mapping')
         raw = np.frombuffer(packet.depth_bytes, '<u2').reshape(h, w)[::2, ::2]
         v, u = np.mgrid[0:h:2, 0:w:2]
+        # The camera reports optical-axis depth, so project it before applying the pose.
         z = raw.astype(float) * info['depth_scale']
         valid = (raw != 0) & (z >= 0.05) & (z <= min(self.MAX_RANGE, info['max_depth']))
         z, u, v = z[valid], u[valid], v[valid]

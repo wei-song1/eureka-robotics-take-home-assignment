@@ -18,6 +18,7 @@ def run():
 
     def watch_interrupt():
         while not done.wait(.1):
+            # The UI cannot signal the child reliably on every supported platform.
             if (Path(control) / 'interrupt').exists():
                 _thread.interrupt_main()
                 return

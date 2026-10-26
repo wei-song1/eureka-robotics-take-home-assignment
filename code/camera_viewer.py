@@ -20,6 +20,7 @@ class MapImageFile:
 
     def read_if_changed(self):
         try:
+            # The size check avoids reading a file while another process replaces it.
             stat = self.path.stat()
             stamp = stat.st_mtime_ns, stat.st_size
             if stamp == self.loaded_stamp:

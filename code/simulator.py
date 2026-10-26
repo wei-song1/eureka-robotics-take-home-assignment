@@ -29,6 +29,7 @@ def initialise_client():
     camera.setsockopt(zmq.SUBSCRIBE, b"")
 
 def call(method, **params):
+    # RPC replies may include binary frames after the JSON result.
     rpc.send_json({"method": method, "params": params})
     frames = rpc.recv_multipart()
     rep = json.loads(frames[0])

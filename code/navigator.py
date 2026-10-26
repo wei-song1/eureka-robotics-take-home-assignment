@@ -30,6 +30,7 @@ def navigate_to_goal(goal_name, max_replans=10):
                 return
 
             except (ValueError, RuntimeError, TimeoutError) as exc:
+                # Stop before inspecting or replanning from the failed pose.
                 simulator.stop_robot()
                 if isinstance(exc, movement.RouteBlocked):
                     if exc.collided:

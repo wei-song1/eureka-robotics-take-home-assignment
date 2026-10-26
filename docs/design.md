@@ -51,6 +51,8 @@ and run transitions.
 | `camera_viewer.py`, `camera_display.py` | Qt presentation and shared video/status formatting |
 | `app.py`, `terminal_bridge.py`, `navigator_runner.py` | GUI launch, terminal subprocess transport and shutdown |
 
+After every non-manual run, recordings of the videos are stored in recordings folder.
+
 # Key Decision
 
 ## Planning and execution

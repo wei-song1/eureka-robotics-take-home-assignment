@@ -132,6 +132,7 @@ class RGBDRecorder:
             self._videos[name] = subprocess.Popen(command, stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL, stderr=self._video_logs[name])
         self._video_index = 0
+        # Each segment starts a fresh constant-rate video and metadata stream.
         self.segments.append({'directory': folder.name, 'first_t': packet.header['t'],
                               'first_seq': packet.header['seq'],
                               'rgb_video': 'rgb.mp4', 'depth_video': 'depth.mp4'})
@@ -200,6 +201,7 @@ class RGBDRecorder:
 
     def _run(self):
         try:
+            # Drain accepted frames before finalising the encoders.
             while not self.finished.is_set() or not self.queue.empty():
                 try:
                     packet, viewer_state = self.queue.get(timeout=.1)
