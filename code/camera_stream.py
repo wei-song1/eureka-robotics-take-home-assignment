@@ -18,14 +18,15 @@ import numpy as np
 from PIL import Image
 
 from recorder import RGBDRecorder, write_json
+from camera_display import depth_preview
 
 _active_session = None
 
 
-def goal_marked(name):
+def goal_marked(name, marked_at=None):
     """Notify the viewer after the simulator has accepted a mark_goal call."""
     if _active_session is not None:
-        _active_session.goal_marked(name)
+        _active_session.goal_marked(name, marked_at)
 
 
 @dataclass(frozen=True)
@@ -71,15 +72,6 @@ def decode_camera_packet(packet, camera_info):
     depth_metres = depth_u16.astype(np.float32) * camera_info['depth_scale']
     depth_metres[depth_u16 == 0] = np.nan
     return rgb, depth_u16, depth_metres
-
-
-def depth_preview(depth_u16, camera_info):
-    """Fixed 0..max_depth grayscale: near is white, far/invalid is black."""
-    metres = depth_u16.astype(np.float32) * camera_info['depth_scale']
-    brightness = np.clip(1 - metres / camera_info['max_depth'], 0, 1)
-    image = (brightness * 255).astype(np.uint8)
-    image[depth_u16 == 0] = 0
-    return image
 
 
 class CameraStream:
@@ -193,18 +185,22 @@ class CameraSession:
         self.scene_info = dict(scene_info or {'id': scene_id, 'name': 'Unknown', 'difficulty': 'Unknown'})
         self.target_goal = target_goal
         self.marked_goals = set()
+        self.goal_mark_times = {}
         self.phase = 'navigating'
         control = os.environ.get('VACUUM_UI_CONTROL_DIR')
         self.ui_control_directory = Path(control) if control else None
 
     def _write_viewer_state(self):
+        viewer_state = {'scene': self.scene_info, 'target_goal': self.target_goal,
+                        'marked_goals': sorted(self.marked_goals), 'phase': self.phase}
+        if self.recorder is not None:
+            self.recorder.set_viewer_state({**viewer_state, 'goal_mark_times': self.goal_mark_times})
         if self.directory is None:
             return
         path = self.directory / 'viewer_state.json'
         try:
             temporary = path.with_suffix('.tmp')
-            write_json(temporary, {'scene': self.scene_info, 'target_goal': self.target_goal,
-                                   'marked_goals': sorted(self.marked_goals), 'phase': self.phase})
+            write_json(temporary, viewer_state)
             temporary.replace(path)
         except OSError as exc:
             print(f'[camera] Could not update viewer status: {exc}', flush=True)
@@ -213,14 +209,23 @@ class CameraSession:
         self.target_goal = None if name in (None, 'Manual') else name
         self._write_viewer_state()
 
-    def goal_marked(self, name):
+    def goal_marked(self, name, marked_at=None):
         self.marked_goals.add(name)
+        if marked_at is None and self.stream is not None:
+            packet, _, _ = self.stream.snapshot()
+            if packet is not None:
+                marked_at = packet.header['t'] + 1e-9
+        if marked_at is not None:
+            self.goal_mark_times[name] = marked_at
         if self.target_goal in (None, 'Manual'):
             self.target_goal = name
         self._write_viewer_state()
+        if self.recorder is not None and self.stream is not None:
+            self.recorder.wait_for_status_frame(timeout=0.4)
 
     def reset_for_next_run(self):
         self.marked_goals.clear()
+        self.goal_mark_times.clear()
         self.target_goal = 'Not selected'
         self.phase = 'choosing'
         self._write_viewer_state()
@@ -252,7 +257,9 @@ class CameraSession:
             try:
                 self.recorder = RGBDRecorder(self.directory, self.camera_info,
                     {'requested_scene': self.scene_id, 'seed': self.seed,
-                     'camera_endpoint': self.endpoint, 'created_utc': stamp}).start()
+                     'camera_endpoint': self.endpoint, 'created_utc': stamp,
+                     'scene': self.scene_info, 'target_goal': self.target_goal}).start()
+                self._write_viewer_state()
                 self.stream = CameraStream(self.endpoint, self.camera_info, self.recorder)
                 self.stream.start()
                 print(f'[camera] Recording to {self.directory.resolve()}', flush=True)

@@ -1,7 +1,6 @@
 """Standalone Qt RGB/depth viewer; closing it does not stop robot navigation."""
 import argparse
 import json
-import math
 from pathlib import Path
 import signal
 import sys
@@ -10,30 +9,7 @@ import numpy as np
 
 from camera_stream import CameraStream, decode_camera_packet, depth_preview
 from terminal_bridge import NavigatorProcess
-
-
-def format_viewer_status(state, header=None):
-    scene = state.get('scene') or {}
-    scene_id = scene.get('id') or '--'
-    name = str(scene.get('name') or 'Unknown').title()
-    difficulty = str(scene.get('difficulty') or 'Unknown').title()
-    target = state.get('target_goal')
-    target_text = target if target not in (None, 'Manual') else 'None (Manual)'
-    marked = target is not None and any(
-        str(goal).casefold() == str(target).casefold()
-        for goal in state.get('marked_goals', []))
-    if header is None:
-        time_text = '--'
-        pose_text = 'x - --, y - --, -- deg'
-    else:
-        pose = header['pose']
-        time_text = f"{header['t']:.2f}"
-        pose_text = f"x - {pose['x']:.3f}, y - {pose['y']:.3f}, {math.degrees(pose['yaw']):.1f} deg"
-    return (f'Scene {scene_id} - {name} ({difficulty})\n'
-            f'Target Goal: {target_text}\n'
-            f'Time: {time_text} s\n'
-            f'Pose: {pose_text}\n'
-            f"Goal: {'Marked' if marked else 'Unmarked'}")
+from camera_display import format_viewer_status
 
 
 class MapImageFile:

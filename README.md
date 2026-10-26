@@ -1,6 +1,6 @@
 # Submission for Eureka Robotics
 
-This project is a Python application submission for controlling and visualising a simulated differential-drive robot vacuum. It communicates with the simulator exclusively through its ZeroMQ network interface.
+This project is a submission for Eureka Robotics' take-home assignment. This is a Python application for controlling and visualising a simulated differential-drive robot vacuum. It communicates with the simulator exclusively through its ZeroMQ network interface.
 
 The application has four main responsibilities:
 

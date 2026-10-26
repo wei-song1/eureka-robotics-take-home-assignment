@@ -4,6 +4,7 @@
 ```
 ├── code                        # All code is stored here
 │   ├── app.py                  # Application entry point, launches the Qt viewer and navigator
+│   ├── camera_display.py
 │   ├── camera_stream.py        # Receives and validates RGBD camera frames
 │   ├── camera_viewer.py        # Qt interface for camera feeds, maps, status, and controls
 │   ├── map_renderer.py         # Renders maps, planned paths, goals, and robot trails

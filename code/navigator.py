@@ -81,8 +81,8 @@ def _navigate_to_goal_attempt(goal_name, deadline, obstacle_map=None):
                 error = 0 if target_yaw is None else abs(math.atan2(math.sin(target_yaw - pose['yaw']), math.cos(target_yaw - pose['yaw'])))
 
                 if math.dist((pose['x'], pose['y']), target) <= 0.04 and error <= math.radians(4):
-                    simulator.mark_goal(goal_name)
-                    camera_stream.goal_marked(goal_name)
+                    mark = simulator.mark_goal(goal_name)
+                    camera_stream.goal_marked(goal_name, marked_at=mark.get('t') if isinstance(mark, dict) else None)
                     print('\nGoal reached and marked.')
                     save_navigation_snapshot()
                     return
@@ -224,8 +224,8 @@ def run_session():
                             print('Usage: r <goal_name>, e.g. r kitchen')
                             continue
 
-                        simulator.mark_goal(parts[1])
-                        camera_stream.goal_marked(parts[1])
+                        mark = simulator.mark_goal(parts[1])
+                        camera_stream.goal_marked(parts[1], marked_at=mark.get('t') if isinstance(mark, dict) else None)
                         save_navigation_snapshot()
                         return scene_id, seed, camera_session
 
