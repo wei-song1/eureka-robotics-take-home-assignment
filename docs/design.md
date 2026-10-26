@@ -111,11 +111,7 @@ After success/final failure, workers finish, the simulator resets and selection
 restarts. Final images remain until the next complete selection. Maps show
 supplied occupancy and observations, not ground truth.
 
-## Validation, limitations and further work
-
-There are 91 passing tests, including real video encode/decode and four synthetic
-navigation scenarios. Native Qt, real PUB/SUB and supplied-simulator scene
-completion remain unverified in the development environment.
+## Further work to be done
 
 There is no SLAM, pose filtering, moving-object tracking or obstacle clearing.
 Inflation can reject passable gaps; camera blind spots and approximate contact
