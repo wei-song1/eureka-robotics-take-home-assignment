@@ -8,6 +8,7 @@ import movement
 import planner
 import map_renderer
 import camera_stream
+import obstacle_mapping
 
 def save_navigation_snapshot():
     try:
@@ -21,20 +22,30 @@ def navigate_to_goal(goal_name, max_replans=5):
         raise ValueError('max_replans must be nonnegative')
     
     deadline = time.monotonic() + 600
-    for attempt in range(max_replans + 1):
-        try:
-            _navigate_to_goal_attempt(goal_name, deadline)
-            return
-        
-        except (ValueError, RuntimeError, TimeoutError) as exc:
-            simulator.stop_robot()
-            if attempt == max_replans or time.monotonic() >= deadline:
-                raise RuntimeError(f'Navigation could not finish after {attempt + 1} attempts: {exc}') from exc
-            
-            print(f'Navigation attempt {attempt + 1} failed: {exc}')
-            print(f'Replanning from the current position ({attempt + 1}/{max_replans} retries)...')
+    with obstacle_mapping.NavigationMap(simulator, cam, robot) as obstacle_map:
+        map_renderer.set_obstacle_map(obstacle_map)
+        for attempt in range(max_replans + 1):
+            try:
+                _navigate_to_goal_attempt(goal_name, deadline, obstacle_map)
+                return
 
-def _navigate_to_goal_attempt(goal_name, deadline):
+            except (ValueError, RuntimeError, TimeoutError) as exc:
+                simulator.stop_robot()
+                if isinstance(exc, movement.RouteBlocked):
+                    if exc.collided:
+                        obstacle_map.record_collision(exc)
+                    pose = exc.message['pose']
+                    if exc.collided or not obstacle_map.planning_map.is_free(
+                            obstacle_map.planning_map.world_to_cell(pose['x'], pose['y'])):
+                        movement.retreat_from_obstacle(exc, obstacle_map, deadline)
+                    save_navigation_snapshot()
+                if attempt == max_replans or time.monotonic() >= deadline:
+                    raise RuntimeError(f'Navigation could not finish after {attempt + 1} attempts: {exc}') from exc
+
+                print(f'Navigation attempt {attempt + 1} failed: {exc}')
+                print(f'Replanning from the current position ({attempt + 1}/{max_replans} retries)...')
+
+def _navigate_to_goal_attempt(goal_name, deadline, obstacle_map=None):
     goals, _ = simulator.call('get_goals')
     goal = next((g for g in goals if g['name'] == goal_name), None)
     if goal is None:
@@ -42,7 +53,7 @@ def _navigate_to_goal_attempt(goal_name, deadline):
     
     target = tuple(goal['pose'][:2])
     target_yaw = goal['pose'][2] if len(goal['pose']) > 2 else None
-    planning_map = planner.get_planning_map()
+    planning_map = planner.get_planning_map() if obstacle_map is None else obstacle_map.planning_map
     print(f'\nPlanning to {goal_name}: {target}; grid {planning_map.resolution:.3f} m/cell, robot diameter {2 * planner.ROBOT_RADIUS:.2f} m, safety margin {planner.SAFETY_MARGIN:.2f} m')
     
     attempts_near_goal = 0
@@ -51,7 +62,14 @@ def _navigate_to_goal_attempt(goal_name, deadline):
             if time.monotonic() >= deadline:
                 raise TimeoutError('Navigation exceeded ten minutes')
             
-            pose = movement.read_navigation_state()['pose']
+            message = movement.read_navigation_state()
+            if obstacle_map is not None:
+                obstacle_map.update(message)
+            pose = message['pose']
+            if obstacle_map is not None and not planning_map.is_free(
+                    planning_map.world_to_cell(pose['x'], pose['y'])):
+                raise movement.RouteBlocked('New obstacle clearance overlaps the robot',
+                                            message, obstacle_map.approach or (pose['x'], pose['y']))
             current = (pose['x'], pose['y'])
             distance = math.dist(current, target)
 
@@ -92,7 +110,13 @@ def _navigate_to_goal_attempt(goal_name, deadline):
                     raise RuntimeError('Could not settle within goal tolerance; goal NOT marked')
                 
             print(f'\nWaypoint {step + 1}: ({waypoint[0]:.2f}, {waypoint[1]:.2f}); goal distance {distance:.2f} m')
-            movement.drive_to_waypoint(waypoint, planning_map)
+            try:
+                movement.drive_to_waypoint(waypoint, planning_map, obstacle_map=obstacle_map)
+            except movement.RouteBlocked as exc:
+                if exc.collided or not planning_map.is_free(planning_map.world_to_cell(
+                        exc.message['pose']['x'], exc.message['pose']['y'])):
+                    raise
+                print(f'[navigation] {exc}; replanning before contact')
             save_navigation_snapshot()
 
         raise RuntimeError('Waypoint limit exceeded; goal NOT marked')

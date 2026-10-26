@@ -2,16 +2,16 @@
 
 ## Project Files Outline
 ```
-├── code                        # All code is stored in this folder
-│   ├── __pycache__
+├── code                        # All code is stored here
 │   ├── app.py                  # Application entry point, launches the Qt viewer and navigator
-│   ├── camera_stream.py        # Receives, validates, previews, and manages RGBD camera data
-│   ├── camera_viewer.py        # UI/Qt interface for live camera feeds, maps, status, and controls
-│   ├── map_renderer.py         # Renders top-down maps, planned paths, goals, and robot trails
-│   ├── movement.py             # Provides manual movement and waypoint motion control
-│   ├── navigator_runner.py     # Runs the navigator as a process connected to the UI terminal
-│   ├── navigator.py            # Coordinates scene selection, planning, navigation, and goal marking
-│   ├── planner.py              # Builds the clearance map and computes A* routes and waypoints
+│   ├── camera_stream.py        # Receives and validates RGBD camera frames
+│   ├── camera_viewer.py        # Qt interface for camera feeds, maps, status, and controls
+│   ├── map_renderer.py         # Renders maps, planned paths, goals, and robot trails
+│   ├── movement.py             # Provides manual motion, waypoint control, and obstacle checks
+│   ├── navigator_runner.py     # Runs the navigator as a UI-connected subprocess
+│   ├── navigator.py            # Coordinates planning, navigation, replanning, and goal marking
+│   ├── obstacle_mapping.py     # Detects unseen obstacles from depth data and updates the planning map
+│   ├── planner.py              # Builds clearance maps and computes A* routes and waypoints
 │   ├── recorder.py             # Saves RGBD frames, metadata, and RGB video recordings
 │   ├── simulator.py            # Wraps ZeroMQ RPC, robot commands, state, and camera sockets
 │   └── terminal_bridge.py      # Connects the Qt terminal to the navigator subprocess
@@ -51,6 +51,7 @@ The obstacles were expanded by the robot's radius in the planning map to prevent
     - Development and testing have primarily focused on simpler scenes. More challenging environments, such as those with narrow passages or complex obstacle arrangements, may reveal weaknesses in the planner or controller that require further improvements.
 - Software and recording dependencies
     - The program has only been tested on my personal laptop, and may not work on other devices. Additionally, the user interface requires PySide6, while RGB video recording requires FFmpeg to be installed and accessible through PATH. The application may not support these features if the required dependencies are missing or incorrectly configured.
+- Development time
 
 # What I would do with more time
 

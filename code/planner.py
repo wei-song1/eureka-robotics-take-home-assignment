@@ -34,6 +34,10 @@ class PlanningMap:
         # The diagonal allowance covers obstacle-pixel and centre-cell areas.
         hard_inflation = robot_radius + math.sqrt(2) * self.resolution
         inflation = hard_inflation + safety_margin
+        self.robot_radius = robot_radius
+        self.safety_cost = safety_cost
+        self.hard_inflation = hard_inflation
+        self.inflation = inflation
         cells = math.ceil(inflation / self.resolution)
         padded = np.pad(self.occupied, cells, constant_values=True)
         self.blocked = np.zeros_like(self.occupied, dtype=bool)
@@ -50,6 +54,60 @@ class PlanningMap:
         self.cost = np.ones(self.occupied.shape, dtype=float)
         self.cost[self.safety] = safety_cost
         self.cost[self.blocked] = math.inf
+
+    def add_obstacles(self, occupied):
+        """Inflate only newly learned cells; preserve the original map and costs."""
+        if occupied.shape != self.occupied.shape:
+            raise ValueError('Obstacle layer dimensions disagree with map')
+        rows, cols = np.nonzero(occupied & ~self.occupied)
+        if not len(rows):
+            return 0
+        self.occupied[rows, cols] = True
+        cells = math.ceil(self.inflation / self.resolution)
+        for dr in range(-cells, cells + 1):
+            for dc in range(-cells, cells + 1):
+                distance = math.hypot(dr, dc) * self.resolution
+                if distance > self.inflation:
+                    continue
+                rr, cc = rows + dr, cols + dc
+                valid = (rr >= 0) & (rr < self.height) & (cc >= 0) & (cc < self.width)
+                rr, cc = rr[valid], cc[valid]
+                self.safety[rr, cc] = True
+                self.cost[rr, cc] = self.safety_cost
+                if distance <= self.hard_inflation:
+                    self.blocked[rr, cc] = True
+        self.safety[self.blocked] = False
+        self.cost[self.blocked] = math.inf
+        return len(rows)
+
+    def retreat_is_safe(self, start, end):
+        """Allow escape from new inflation only while clearance increases.
+
+        A normal route cannot start in inflation. A short collision retreat
+        may do so, but must stay inside the map and move away from occupancy.
+        """
+        rows, cols = np.nonzero(self.occupied)
+        obstacle_x = self.origin[0] + (cols + 0.5) * self.resolution
+        obstacle_y = self.origin[1] + (self.height - rows - 0.5) * self.resolution
+        previous = None
+        first = None
+        count = max(2, math.ceil(math.dist(start, end) / (self.resolution / 2)) + 1)
+        for fraction in np.linspace(0, 1, count):
+            x, y = (a + fraction * (b - a) for a, b in zip(start, end))
+            row, col = self.world_to_cell(x, y)
+            if not (0 <= row < self.height and 0 <= col < self.width):
+                return False
+            if self.occupied[row, col]:
+                return False
+            clearance = float(np.min(np.hypot(obstacle_x - x, obstacle_y - y))) if len(rows) else math.inf
+            if clearance < self.robot_radius - 0.03:
+                return False
+            if previous is not None and clearance < previous - 0.002:
+                return False
+            if first is None:
+                first = clearance
+            previous = clearance
+        return self.is_free(self.world_to_cell(*end)) or previous > first + 0.001
 
     def world_to_cell(self, x, y):
         col = math.floor((x - self.origin[0]) / self.resolution)

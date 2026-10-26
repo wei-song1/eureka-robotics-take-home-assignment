@@ -12,10 +12,16 @@ from PIL import Image, ImageDraw
 simulator = None
 travelled_path = None
 _image_save_lock = threading.Lock()
+obstacle_map = None
+
+def set_obstacle_map(value):
+    global obstacle_map
+    obstacle_map = value
 
 def configure(simulator_value, travelled_path_value):
     global simulator, travelled_path
     simulator, travelled_path = simulator_value, travelled_path_value
+    set_obstacle_map(None)
 
 def save_top_down_map(filename='top_down_map.png', debug=False, *, client=None):
     client = simulator if client is None else client
@@ -34,6 +40,12 @@ def save_top_down_map(filename='top_down_map.png', debug=False, *, client=None):
         return (pixel_x, pixel_y)
     
     image = Image.open(io.BytesIO(frames[0])).convert('RGB')
+    if obstacle_map is not None:
+        learned = obstacle_map.snapshot_obstacles()
+        pixels = np.array(image)
+        if learned.shape == pixels.shape[:2]:
+            pixels[learned] = (255, 165, 0)
+            image = Image.fromarray(pixels)
     draw = ImageDraw.Draw(image)
     path_pixels = [world_to_pixel(x, y) for x, y in travelled_path]
 
@@ -91,14 +103,16 @@ def save_top_down_map(filename='top_down_map.png', debug=False, *, client=None):
 def save_planned_map(planning_map, waypoints, filename='planned_map.png'):
     """Render a copy of the planning grid; never modify A* occupancy data.
 
-    White = free, grey = hard robot clearance, orange = soft safety band,
-    black = actual mapped obstacles,
+    White = free, grey = hard robot clearance, light grey = soft safety band,
+    black = supplied obstacles, orange = learned obstacles,
     blue = planned route, green = current start, red = goal.
     """
     pixels = np.full((planning_map.height, planning_map.width, 3), 255, dtype=np.uint8)
     pixels[planning_map.blocked] = (190, 190, 190)
-    pixels[planning_map.safety] = (255, 190, 80)
+    pixels[planning_map.safety] = (230, 230, 230)
     pixels[planning_map.occupied] = (0, 0, 0)
+    if obstacle_map is not None and obstacle_map.planning_map is planning_map:
+        pixels[obstacle_map.snapshot_obstacles()] = (255, 165, 0)
     image = Image.fromarray(pixels)
     draw = ImageDraw.Draw(image)
 
